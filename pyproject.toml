@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-mind-your-now"
+version = "0.1.0"
+description = "Hermes plugin for Mind Your Now — tasks, reminders, calendar, habits, lists, memory, and more."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11,<3.14"
+authors = [
+    {name = "Mind Your Now"},
+]
+dependencies = [
+    "httpx",
+]
+
+[project.entry-points."hermes_agent.plugins"]
+mind-your-now = "mind_your_now:register"
+
+[project.urls]
+Homepage = "https://github.com/mindyournow/hermes-mind-your-now"
+Repository = "https://github.com/mindyournow/hermes-mind-your-now"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
