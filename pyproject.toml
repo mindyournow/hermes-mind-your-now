@@ -7,7 +7,7 @@ name = "hermes-mind-your-now"
 version = "0.1.0"
 description = "Hermes plugin for Mind Your Now — tasks, reminders, calendar, habits, lists, memory, and more."
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.11,<3.14"
 authors = [
     {name = "Mind Your Now"},
