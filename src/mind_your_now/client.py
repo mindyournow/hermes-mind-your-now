@@ -56,14 +56,33 @@ class MynApiClient:
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return self._request("GET", path, params=params)
 
-    def post(self, path: str, json: Any = None) -> Any:
-        return self._request("POST", path, json=json)
+    def post(
+        self,
+        path: str,
+        json: Any = None,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        return self._request("POST", path, params=params, json=json)
 
-    def patch(self, path: str, json: Any = None) -> Any:
-        return self._request("PATCH", path, json=json)
+    def patch(
+        self,
+        path: str,
+        json: Any = None,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        return self._request("PATCH", path, params=params, json=json)
 
-    def put(self, path: str, json: Any = None) -> Any:
-        return self._request("PUT", path, json=json)
+    def put(
+        self,
+        path: str,
+        json: Any = None,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        return self._request("PUT", path, params=params, json=json)
 
-    def delete(self, path: str) -> Any:
-        return self._request("DELETE", path)
+    def delete(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        return self._request("DELETE", path, params=params)
