@@ -133,7 +133,7 @@ def test_handlers_error_cleanly_without_key(tmp_path, monkeypatch):
 
     assert len(context.tools) == 14
     for tool in context.tools:
-        result = json.loads(tool["handler"]())
+        result = json.loads(tool["handler"]({}))
         assert result == {
             "success": False,
             "error": "MYN not configured — set MYN_API_KEY",

@@ -26,17 +26,23 @@ def tool_error(message: str) -> str:
 
 
 def guarded(
-    available: Callable[[], bool],
+    available: Callable[..., bool],
     fn: Callable[..., str],
 ) -> Callable[..., str]:
     """Self-guard a handler because Hermes dispatch ignores check_fn."""
 
     @functools.wraps(fn)
-    def wrapper(**kwargs: Any) -> str:
+    def wrapper(
+        arguments: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> str:
         if not available():
             return tool_error("MYN not configured — set MYN_API_KEY")
+        if arguments is not None and not isinstance(arguments, dict):
+            return tool_error("MYN tool arguments must be an object")
+        payload = {**(arguments or {}), **kwargs}
         try:
-            return fn(**kwargs)
+            return fn(**payload)
         except MynApiError as exc:
             return tool_error(f"MYN API {exc.status}: {exc.snippet}")
         except Exception as exc:  # noqa: BLE001
@@ -52,7 +58,7 @@ def register_myn_tool(
     name: str,
     schema: dict[str, Any],
     handler: Callable[..., str],
-    check_fn: Callable[[], bool],
+    check_fn: Callable[..., bool],
     description: str,
     emoji: str,
 ) -> None:

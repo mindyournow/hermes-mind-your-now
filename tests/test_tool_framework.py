@@ -33,6 +33,20 @@ def test_guard_returns_tool_error_when_unavailable():
     assert called is False
 
 
+def test_guard_accepts_hermes_positional_argument_object():
+    received = None
+
+    def handler(**kwargs):
+        nonlocal received
+        received = kwargs
+        return "ok"
+
+    result = guarded(lambda: True, handler)({"action": "list", "limit": 1})
+
+    assert result == "ok"
+    assert received == {"action": "list", "limit": 1}
+
+
 def test_guard_maps_api_error():
     def handler(**_kwargs):
         raise MynApiError(404, "missing")
