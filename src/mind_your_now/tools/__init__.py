@@ -13,10 +13,16 @@ from mind_your_now.client import MynApiError
 logger = logging.getLogger(__name__)
 
 
-def _tool_error(message: str) -> str:
-    from tools.registry import tool_error
+def tool_result(payload: Any) -> str:
+    from tools.registry import tool_result as hermes_tool_result
 
-    return tool_error(message)
+    return hermes_tool_result(payload)
+
+
+def tool_error(message: str) -> str:
+    from tools.registry import tool_error as hermes_tool_error
+
+    return hermes_tool_error(message)
 
 
 def guarded(
@@ -28,14 +34,14 @@ def guarded(
     @functools.wraps(fn)
     def wrapper(**kwargs: Any) -> str:
         if not available():
-            return _tool_error("MYN not configured — set MYN_API_KEY")
+            return tool_error("MYN not configured — set MYN_API_KEY")
         try:
             return fn(**kwargs)
         except MynApiError as exc:
-            return _tool_error(f"MYN API {exc.status}: {exc.snippet}")
+            return tool_error(f"MYN API {exc.status}: {exc.snippet}")
         except Exception as exc:  # noqa: BLE001
             logger.warning("[myn] %s failed: %s", fn.__name__, exc)
-            return _tool_error(f"MYN tool failure: {exc}")
+            return tool_error(f"MYN tool failure: {exc}")
 
     return wrapper
 
