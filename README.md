@@ -140,8 +140,9 @@ For `hermes-eltmon`, build and upload a wheel to the persistent volume:
 
 ```bash
 python -m build
-fly sftp put -a hermes-eltmon dist/hermes_mind_your_now-0.1.0-py3-none-any.whl /opt/data/plugins/hermes_mind_your_now-0.1.0-py3-none-any.whl
-fly ssh console -a hermes-eltmon -s -C "pip install --target /opt/data/python-pkgs /opt/data/plugins/hermes_mind_your_now-0.1.0-py3-none-any.whl"
+fly sftp put -a hermes-eltmon dist/hermes_mind_your_now-0.1.1-py3-none-any.whl /opt/data/plugins/hermes_mind_your_now-0.1.1-py3-none-any.whl
+fly ssh console -a hermes-eltmon -s -C "sh -lc 'mkdir -p /opt/data/python-pkgs; chown -R hermes:hermes /opt/data/plugins /opt/data/python-pkgs; su hermes -s /bin/sh -c \"uv pip install --python /opt/hermes/.venv/bin/python --target /opt/data/python-pkgs --no-deps --reinstall /opt/data/plugins/hermes_mind_your_now-0.1.1-py3-none-any.whl\"'"
+fly secrets set -a hermes-eltmon PYTHONPATH=/opt/data/python-pkgs
 fly secrets set -a hermes-eltmon MYN_API_KEY='myn_...'
 ```
 

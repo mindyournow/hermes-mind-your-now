@@ -1,5 +1,8 @@
+import importlib.metadata
 import json
+from pathlib import Path
 import sys
+import tomllib
 import types
 
 import pytest
@@ -70,6 +73,23 @@ def clear_config(monkeypatch, home):
     monkeypatch.setenv("HOME", str(home))
     for key in ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+
+
+def test_package_entry_point_loads_plugin_module():
+    pyproject = tomllib.loads(
+        (Path(__file__).parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+    )
+
+    configured = pyproject["project"]["entry-points"]["hermes_agent.plugins"]
+    assert configured == {"mind-your-now": "mind_your_now"}
+
+    entry_point = importlib.metadata.EntryPoint(
+        name="mind-your-now",
+        value=configured["mind-your-now"],
+        group="hermes_agent.plugins",
+    )
+    module = entry_point.load()
+    assert module.register is register
 
 
 def test_registers_14_tools_one_hook_one_command(tmp_path, monkeypatch):
