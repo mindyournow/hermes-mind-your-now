@@ -149,9 +149,10 @@ fly secrets set -a hermes-eltmon MYN_API_KEY='myn_...'
 Ensure `/opt/data/python-pkgs` is on `PYTHONPATH`, enable `mind-your-now` in Hermes, restart the Hermes process, and verify with:
 
 ```bash
-hermes plugins list
-hermes tools mind-your-now
+hermes plugins list --json
 ```
+
+Confirm the output contains `mind-your-now` with `status` set to `enabled` and `source` set to `entrypoint`. Hermes 0.18.x's `hermes tools` command lists built-in toolsets and does not accept a plugin name.
 
 End-to-end verification should cover a real schedule query, a Kaia memory hit, a reminder whose MYN provenance begins with `Hermes/`, and `/myn status`.
 
