@@ -1,7 +1,7 @@
 name: mind-your-now
 version: 0.1.0
-description: "Hermes plugin for Mind Your Now (MYN). Provides 14 tools for tasks, debrief, calendar, habits, lists, search, timers, memory, profile, household, projects, planning, A2A pairing, and YNAB; plus a pre_llm_call hook that injects Kaia memory context. Requires MYN_API_KEY."
-author: "Mind Your Now"
+description: "Mind Your Now — tasks, calendar, habits, timers, debrief, YNAB, and Kaia memory injection for Hermes."
+author: "Mind Your Now <team@mindyournow.com>"
 kind: standalone
 requires_env:
   - MYN_API_KEY
