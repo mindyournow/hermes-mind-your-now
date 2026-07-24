@@ -51,7 +51,7 @@ def register(ctx: Any) -> None:
         _warn(ctx, "[myn] MYN_API_KEY not configured; tools registered but hidden")
 
     client = MynApiClient(config.base_url, config.api_key)
-    available = lambda: bool(config.api_key)
+    available = lambda *_args, **_kwargs: bool(config.api_key)
     provenance = {
         "source_agent_name": config.agent_name,
         "source_channel": config.channel,

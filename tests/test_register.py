@@ -115,6 +115,16 @@ def test_all_tools_in_myn_toolset(tmp_path, monkeypatch):
     assert {tool["toolset"] for tool in context.tools} == {"mind-your-now"}
 
 
+def test_check_functions_accept_hermes_runtime_context(tmp_path, monkeypatch):
+    clear_config(monkeypatch, tmp_path)
+    monkeypatch.setenv("MYN_API_KEY", "myn-key")
+    context = Context()
+
+    register(context)
+
+    assert all(tool["check_fn"](object()) is True for tool in context.tools)
+
+
 def test_handlers_error_cleanly_without_key(tmp_path, monkeypatch):
     clear_config(monkeypatch, tmp_path)
     context = Context()
