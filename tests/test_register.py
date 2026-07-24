@@ -134,6 +134,20 @@ def test_handlers_error_cleanly_without_key(tmp_path, monkeypatch):
     ]
 
 
+def test_register_uses_module_logger_when_context_has_no_logger(
+    tmp_path, monkeypatch, caplog
+):
+    clear_config(monkeypatch, tmp_path)
+    context = Context()
+    del context.logger
+
+    with caplog.at_level("WARNING", logger="mind_your_now"):
+        register(context)
+
+    assert len(context.tools) == 14
+    assert "[myn] MYN_API_KEY not configured; tools registered but hidden" in caplog.messages
+
+
 def test_register_survives_bad_config(tmp_path, monkeypatch):
     clear_config(monkeypatch, tmp_path)
     monkeypatch.setenv("MYN_BASE_URL", "http://api.example.com")

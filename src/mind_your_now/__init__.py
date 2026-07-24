@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from mind_your_now.client import MynApiClient
@@ -27,12 +28,15 @@ from mind_your_now.tools.ynab import register_ynab_tool
 __all__ = ["register"]
 
 
+logger = logging.getLogger(__name__)
+
+
 def _warn(ctx: Any, message: str) -> None:
-    logger = ctx.logger
-    if hasattr(logger, "warning"):
-        logger.warning(message)
+    target = getattr(ctx, "logger", logger)
+    if hasattr(target, "warning"):
+        target.warning(message)
     else:
-        logger.warn(message)
+        target.warn(message)
 
 
 def register(ctx: Any) -> None:
