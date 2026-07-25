@@ -18,13 +18,17 @@ The matching names and action vocabulary let prompts and examples move between H
 
 ## Install
 
-### pip package
+### GitHub release wheel
+
+The package is not currently published on PyPI. Install the verified v0.1.4 wheel directly from GitHub Releases:
 
 ```bash
-pip install hermes-mind-your-now
+python -m pip install https://github.com/mindyournow/hermes-mind-your-now/releases/download/v0.1.4/hermes_mind_your_now-0.1.4-py3-none-any.whl
 hermes plugins enable mind-your-now
-hermes plugins list
+hermes plugins list --json
 ```
+
+Once the package is published on PyPI, the shorter installation command will be `python -m pip install hermes-mind-your-now`; do not use that command before publication.
 
 ### Directory drop
 
