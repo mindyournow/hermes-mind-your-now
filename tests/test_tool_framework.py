@@ -1,6 +1,10 @@
 """Tests for shared tool framework helpers."""
 
-from mind_your_now.tools import truncate
+import httpx
+import pytest
+
+from mind_your_now.client import MynApiClient
+from mind_your_now.tools import fetch_all_unified_tasks, truncate
 
 
 def test_truncate_slices_list_and_marks_when_cut():
@@ -81,3 +85,44 @@ def test_truncate_non_list_value():
 
     assert result == payload
     assert "_truncated" not in result
+
+
+def test_fetch_all_unified_tasks_reads_every_server_page():
+    observed = []
+
+    def transport(request):
+        params = dict(request.url.params)
+        observed.append(params)
+        page = int(params["page"])
+        start = page * 200
+        count = 200 if page == 0 else 5
+        return httpx.Response(
+            200,
+            json=[{"id": f"task-{index}"} for index in range(start, start + count)],
+        )
+
+    client = MynApiClient(
+        "https://api.example.com",
+        "key",
+        transport=httpx.MockTransport(transport),
+    )
+
+    tasks = fetch_all_unified_tasks(client, params={"type": "HABIT"})
+
+    assert len(tasks) == 205
+    assert observed == [
+        {"type": "HABIT", "page": "0", "size": "200"},
+        {"type": "HABIT", "page": "1", "size": "200"},
+    ]
+
+
+def test_fetch_all_unified_tasks_rejects_non_advancing_pages():
+    page = [{"id": f"task-{index}"} for index in range(200)]
+    client = MynApiClient(
+        "https://api.example.com",
+        "key",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=page)),
+    )
+
+    with pytest.raises(RuntimeError, match="did not advance"):
+        fetch_all_unified_tasks(client)

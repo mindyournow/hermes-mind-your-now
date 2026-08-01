@@ -28,7 +28,7 @@ Guarded endpoints:
 
 ## Rule 3: No Advertised-But-Ignored Parameters
 
-Every parameter in a tool's schema must be honored in the handler. No silent dropping of inputs. The planning tool was refactored to strip all ignored parameters (goal, constraints, tasks, date, etc.) from its schema, keeping only `action` and `spreadOverDays`.
+Every parameter in a tool's schema must be honored in the handler. No silent dropping of inputs. The planning tool strips ignored scope and constraint parameters, keeping only `action`, `spreadOverDays`, and the implemented `dryRun` candidate preview.
 
 **Files:**
 - `src/mind_your_now/tools/planning.py` (PLANNING_SCHEMA)
@@ -38,18 +38,18 @@ Every parameter in a tool's schema must be honored in the handler. No silent dro
 
 ## Rule 4: Honest Dry-Run Capabilities
 
-The list bulk actions `delete_checked` and `convert_to_tasks` support `dryRun: true`; the response includes the affected item set and a count without mutating the list. Planning actions do not advertise `dryRun`, because the API cannot yet provide a reliable affected-task preview. A manually injected planning `dryRun` argument is rejected without sending a scheduling request.
+The list bulk actions `delete_checked` and `convert_to_tasks` support `dryRun: true`; the response includes the affected item set and a count without mutating the list. Planning `schedule_all` and `reschedule` dry-runs page through the complete unified-task collection, apply the controller's candidate rules, and return slimmed candidate tasks without invoking a scheduling endpoint.
 
 Caveats:
 - List dry-run is not item-scoped (no `itemIds` filter) — it applies to the full household list. Item scoping is tracked as MIN-932.
-- Planning preview, including the affected task set and engine decisions, is tracked as MIN-932.
+- Planning dry-run identifies candidate tasks, but engine-selected dates and placements remain unavailable until MIN-932.
 
 **Files:**
 - `src/mind_your_now/tools/lists.py` (delete_checked, convert_to_tasks)
-- `src/mind_your_now/tools/planning.py` (explicit dry-run rejection)
+- `src/mind_your_now/tools/planning.py` (schedule_all, reschedule candidate previews)
 - Test coverage: `tests/test_ac_verification.py`, `tests/test_tools_planning.py`
 
-**Status:** ✓ Implemented without advertising unsupported planning previews
+**Status:** ✓ Implemented with explicit engine-preview limits
 
 ## Rule 5: Redacted Tool Output
 
@@ -75,7 +75,7 @@ The following improvements are blocked by MIN-932 (scoped planning and search):
 - Filtered-search capability in memory (`min-932` item 2)
 - Scoped planning with per-task/per-date control
 - Item-scoped dryRun for bulk list operations
-- Planning affected-task and engine-decision preview for dryRun
+- Planning engine-decision preview for dryRun
 
 The habits `reminders` action was removed; restoration is blocked on MIN-932 and cross-references MIN-883.
 

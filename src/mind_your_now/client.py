@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json as json_module
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -100,6 +101,7 @@ class MynApiClient:
         json: Any = None,
         get_path: str | None = None,
         params: dict[str, Any] | None = None,
+        validate_current: Callable[[Any], None] | None = None,
     ) -> Any:
         """Execute a write (PATCH/PUT/POST/DELETE) with read-before-write state-hash enforcement.
 
@@ -117,6 +119,9 @@ class MynApiClient:
             json: JSON body for the write (omitted for DELETE)
             get_path: The path to read from for the state hash (defaults to path)
             params: Query parameters (for both read and write)
+            validate_current: Optional validator called on the exact representation whose
+                stateHash will authorize the write. On 409, validated writes always re-read
+                and revalidate before retrying instead of trusting the conflict body alone.
 
         Returns:
             The response from the write (or None for 204 / empty)
@@ -128,6 +133,8 @@ class MynApiClient:
 
         # Step 1: Read the current state to get the stateHash
         current = self.get(read_path, params=params)
+        if validate_current is not None:
+            validate_current(current)
         state_hash = current.get("stateHash") if isinstance(current, dict) else None
 
         # Step 2: Attempt the write with the state hash
@@ -135,11 +142,12 @@ class MynApiClient:
             return self._write_with_hash(method, path, json=json, params=params, state_hash=state_hash)
         except MynApiError as exc:
             if exc.status == 409:
-                # Step 3: On conflict, extract currentStateHash from 409 body and retry once
-                state_hash = self._hash_from_conflict(exc.snippet)
+                # A representation validator must inspect the exact state whose hash is used.
+                state_hash = None if validate_current is not None else self._hash_from_conflict(exc.snippet)
                 if state_hash is None:
-                    # If we couldn't extract it, re-read the resource
                     fresh = self.get(read_path, params=params)
+                    if validate_current is not None:
+                        validate_current(fresh)
                     state_hash = fresh.get("stateHash") if isinstance(fresh, dict) else None
                 return self._write_with_hash(method, path, json=json, params=params, state_hash=state_hash)
             raise

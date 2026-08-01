@@ -154,7 +154,11 @@ CASES = [
         "POST",
         "/api/v1/ynab/transactions/bulk",
     ),
-    ({"action": "list_transactions"}, "GET", "/api/v1/ynab/transactions"),
+    (
+        {"action": "list_transactions", "sinceDate": "2026-07-01"},
+        "GET",
+        "/api/v1/ynab/transactions",
+    ),
     (
         {"action": "update_transaction", "transactionId": TRANSACTION_ID, "memo": "Updated"},
         "PUT",
@@ -267,6 +271,16 @@ def test_each_action_uses_expected_final_method_and_path(input_data, method, pat
 
 def test_action_cases_cover_every_schema_action():
     assert {case[0]["action"] for case in CASES} == set(ACTIONS)
+
+
+def test_list_transactions_requires_since_date_before_fetch():
+    observed = []
+
+    result = json.loads(build_handler(observed)(action="list_transactions", limit=5))
+
+    assert observed == []
+    assert result["success"] is False
+    assert "sinceDate is required" in result["error"]
 
 
 def test_milliunit_fields_are_recursively_formatted():

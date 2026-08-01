@@ -10,7 +10,13 @@ from typing import Any
 
 from mind_your_now.client import MynApiClient
 from mind_your_now.schemas import action_schema
-from mind_your_now.tools import register_myn_tool, tool_error, tool_result
+from mind_your_now.tools import (
+    fetch_all_unified_tasks,
+    register_myn_tool,
+    tool_error,
+    tool_result,
+    truncate,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -66,8 +72,8 @@ TASKS_SCHEMA = action_schema(
             "format": "date",
             "description": "For list, include tasks whose start/end interval overlaps this date or earlier.",
         },
-        "limit": {"type": "number", "default": 20},
-        "offset": {"type": "number", "default": 0},
+        "limit": {"type": "integer", "minimum": 1, "default": 20},
+        "offset": {"type": "integer", "minimum": 0, "default": 0},
         "taskId": {"type": "string", "format": "uuid"},
         "title": {"type": "string", "minLength": 1, "maxLength": 200},
         "description": {"type": "string", "maxLength": 2000},
@@ -197,6 +203,13 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
     action = input_data.get("action")
 
     if action == "list":
+        limit = input_data.get("limit", 20)
+        offset = input_data.get("offset", 0)
+        if type(limit) is not int or limit < 1:
+            return tool_error("limit must be a positive integer")
+        if type(offset) is not int or offset < 0:
+            return tool_error("offset must be a non-negative integer")
+
         range_start = _parse_date(input_data.get("startDate"))
         range_end = _parse_date(input_data.get("endDate"))
         if input_data.get("startDate") is not None and range_start is None:
@@ -218,15 +231,10 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
             )
             if input_data.get(key) is not None
         }
-        data = client.get("/api/v2/unified-tasks", params=params)
-
-        # Normalize bare array or wrapped response
-        if isinstance(data, list):
-            tasks = data
-        elif isinstance(data, dict) and isinstance(data.get("tasks"), list):
-            tasks = data["tasks"]
-        else:
+        data = fetch_all_unified_tasks(client, params=params)
+        if not isinstance(data, list):
             return tool_result(data)
+        tasks = data
 
         # The API currently ignores some filters, so enforce them in one client-side pass.
         tasks = [
@@ -250,18 +258,7 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
             }
             slimmed.append(slim_task)
 
-        # Apply offset and limit with truncate
-        from mind_your_now.tools import truncate
-        offset = input_data.get("offset", 0)
-        limit = input_data.get("limit")
-
-        result = {"tasks": slimmed}
-        if limit:
-            result = truncate(result, "tasks", int(limit), offset=offset)
-        elif offset:
-            # No limit but offset was requested - mark truncation
-            result = truncate(result, "tasks", len(slimmed), offset=offset)
-
+        result = truncate({"tasks": slimmed}, "tasks", limit, offset=offset)
         return tool_result(result)
 
     if action in {"get", "update", "complete", "archive"}:

@@ -283,6 +283,29 @@ def test_guarded_write_rereads_on_409_without_currentStateHash():
     assert retry_patch.headers["X-MYN-State-Hash"] == "hash-v2"
 
 
+def test_guarded_write_revalidates_representation_before_conflict_retry():
+    transport = MockTransport()
+    transport.responses = [
+        make_response(200, {"stateHash": "hash-v1", "title": "HERMES-SMOKE-task"}),
+        make_response(409, {"currentStateHash": "hash-v2"}),
+        make_response(200, {"stateHash": "hash-v3", "title": "real user task"}),
+    ]
+    client = MynApiClient("https://api.example.com", "key", transport=transport)
+
+    def validate_current(current):
+        if "HERMES-SMOKE-" not in current.get("title", ""):
+            raise RuntimeError("marker missing")
+
+    with pytest.raises(RuntimeError, match="marker missing"):
+        client.guarded_write(
+            "DELETE",
+            "/api/v2/resource",
+            validate_current=validate_current,
+        )
+
+    assert [request.method for request in transport.requests] == ["GET", "DELETE", "GET"]
+
+
 def test_guarded_write_propagates_non_409_errors():
     """A non-409 error propagates without retrying."""
     transport = MockTransport()

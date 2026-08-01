@@ -85,7 +85,10 @@ YNAB_SCHEMA = action_schema(
         "transferToAccount": {"type": "string"},
         "amount": {"type": "number"},
         "date": {"type": "string"},
-        "sinceDate": {"type": "string", "description": "Start date for transaction query (YYYY-MM-DD)"},
+        "sinceDate": {
+            "type": "string",
+            "description": "Required start date for list_transactions to bound the upstream query (YYYY-MM-DD)",
+        },
         "untilDate": {"type": "string", "description": "End date for transaction query, strongly preferred to narrow results (YYYY-MM-DD)"},
         "memo": {"type": "string"},
         "months": {"type": "number"},
@@ -104,7 +107,11 @@ YNAB_SCHEMA = action_schema(
         "targetGroupName": {"type": "string"},
         "note": {"type": "string"},
         "categoryGroupId": {"type": "string"},
-        "limit": {"type": "number", "description": "Maximum payees to return (client-side truncation)"},
+        "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum matching records to return (client-side truncation)",
+        },
         "splits": {
             "type": "array",
             "items": {
@@ -410,13 +417,14 @@ def execute_ynab(client: MynApiClient, **input_data: Any) -> str:
         )
 
     if action == "list_transactions":
-        params: dict[str, str] = {}
-        if input_data.get("date"):
-            params["sinceDate"] = input_data["date"]
-        if input_data.get("sinceDate"):
-            params["sinceDate"] = input_data["sinceDate"]
+        since_date = input_data.get("sinceDate") or input_data.get("date")
+        if not since_date:
+            return tool_error(
+                "sinceDate is required for list_transactions so the upstream YNAB read is bounded"
+            )
+        params = {"sinceDate": since_date}
         data = _convert_milliunits(
-            client.get("/api/v1/ynab/transactions", params=params or None)
+            client.get("/api/v1/ynab/transactions", params=params)
         )
         # Filter by untilDate client-side (API doesn't honor it)
         until_date = input_data.get("untilDate")

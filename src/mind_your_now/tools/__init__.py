@@ -34,6 +34,48 @@ def _redact_secrets(obj: Any) -> Any:
         return obj
 
 
+def fetch_all_unified_tasks(
+    client: Any,
+    *,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    """Retrieve every page from the unified-task endpoint.
+
+    The API defaults to 50 records and caps pages at 200. Client-side filters and
+    pagination must operate on the complete collection, not the first server page.
+    Unexpected first-page shapes are returned unchanged for backward compatibility.
+    """
+    page_size = 200
+    page = 0
+    tasks: list[dict[str, Any]] = []
+    seen_page_signatures: set[tuple[str, ...]] = set()
+
+    while True:
+        page_params = {**(params or {}), "page": page, "size": page_size}
+        data = client.get("/api/v2/unified-tasks", params=page_params)
+        if isinstance(data, list):
+            page_tasks = data
+        elif isinstance(data, dict) and isinstance(data.get("tasks"), list):
+            page_tasks = data["tasks"]
+        elif page == 0:
+            return data
+        else:
+            raise RuntimeError("Unified-task pagination returned an unexpected response shape")
+
+        signature = tuple(
+            str(task.get("id", f"missing-id-{index}"))
+            for index, task in enumerate(page_tasks)
+        )
+        if signature in seen_page_signatures:
+            raise RuntimeError("Unified-task pagination did not advance")
+        seen_page_signatures.add(signature)
+        tasks.extend(page_tasks)
+
+        if len(page_tasks) < page_size:
+            return tasks
+        page += 1
+
+
 def truncate(payload: dict[str, Any], key: str, limit: int, *, offset: int = 0) -> dict[str, Any]:
     """Apply client-side limit/offset to a list in the payload and mark if truncated.
 

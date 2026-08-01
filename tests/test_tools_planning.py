@@ -1,6 +1,7 @@
 import json
 import sys
 import types
+from datetime import date, timedelta
 
 import httpx
 import pytest
@@ -76,17 +77,87 @@ def test_reschedule_passes_rebalance_via_params():
     assert observed == [{"rebalance": "false"}, {"rebalance": "true"}]
 
 
-def test_schema_does_not_advertise_unsupported_dry_run():
+def test_schema_advertises_implemented_read_only_dry_run():
     from mind_your_now.tools.planning import PLANNING_SCHEMA
 
-    assert "dryRun" not in PLANNING_SCHEMA["properties"]
+    assert PLANNING_SCHEMA["properties"]["dryRun"]["type"] == "boolean"
+    assert (
+        "engine decisions"
+        in PLANNING_SCHEMA["properties"]["dryRun"]["description"].lower()
+    )
 
 
-@pytest.mark.parametrize("action", ["schedule_all", "reschedule"])
-def test_manually_injected_dry_run_is_rejected_without_mutation(action):
-    handler = build_handler(lambda _request: pytest.fail("dryRun must not call the API"))
+@pytest.mark.parametrize(
+    ("action", "spread_over_days", "expected_ids"),
+    [
+        ("schedule_all", 1, ["eligible", "habit"]),
+        ("reschedule", 1, ["eligible"]),
+        ("reschedule", 3, ["eligible", "future"]),
+    ],
+)
+def test_dry_run_returns_candidate_set_without_mutation(
+    action, spread_over_days, expected_ids
+):
+    observed = []
+    today = date.today()
+    tasks = [
+        {
+            "id": "eligible",
+            "title": "Eligible",
+            "taskType": "TASK",
+            "priority": "CRITICAL",
+            "startDate": today.isoformat(),
+            "isCompleted": False,
+            "isAutoScheduled": False,
+        },
+        {
+            "id": "future",
+            "title": "Future",
+            "taskType": "TASK",
+            "priority": "CRITICAL",
+            "startDate": (today + timedelta(days=2)).isoformat(),
+            "isCompleted": False,
+            "isAutoScheduled": False,
+        },
+        {
+            "id": "completed",
+            "title": "Completed",
+            "taskType": "TASK",
+            "priority": "CRITICAL",
+            "startDate": today.isoformat(),
+            "isCompleted": True,
+            "isAutoScheduled": False,
+        },
+        {
+            "id": "habit",
+            "title": "Habit",
+            "taskType": "HABIT",
+            "priority": "CRITICAL",
+            "startDate": today.isoformat(),
+            "isCompleted": False,
+            "isAutoScheduled": False,
+        },
+    ]
 
-    result = json.loads(handler(action=action, dryRun=True))
+    def transport(request):
+        observed.append((request.method, request.url.path, dict(request.url.params)))
+        assert request.method == "GET"
+        return httpx.Response(200, json={"tasks": tasks})
 
-    assert result["success"] is False
-    assert "not supported" in result["error"]
+    result = json.loads(
+        build_handler(transport)(
+            action=action,
+            spreadOverDays=spread_over_days,
+            dryRun=True,
+        )
+    )
+
+    assert observed == [
+        ("GET", "/api/v2/unified-tasks", {"page": "0", "size": "200"})
+    ]
+    assert result["success"] is True
+    assert [task["id"] for task in result["data"]["tasks"]] == expected_ids
+    assert result["data"]["count"] == len(expected_ids)
+    assert result["data"]["dryRun"] is True
+    assert result["data"]["engineDecisionsPreviewed"] is False
+    assert "MIN-932" in result["data"]["message"]

@@ -231,8 +231,8 @@ def test_wi6c_ac1_list_budgets_dispatches_to_endpoint():
 
 
 # WI-7a: planning schema honesty AC
-def test_wi7a_ac1_planning_schema_contains_only_action_and_spreadoverdays():
-    """AC: PLANNING_SCHEMA contains only action and spreadOverDays."""
+def test_wi7a_ac1_planning_schema_contains_only_supported_parameters():
+    """AC: PLANNING_SCHEMA contains only action, spreadOverDays, and dryRun."""
     from mind_your_now.tools.planning import PLANNING_SCHEMA
 
     # Schema structure: properties are at top level for action_schema output
@@ -244,7 +244,7 @@ def test_wi7a_ac1_planning_schema_contains_only_action_and_spreadoverdays():
     assert "constraints" not in props
     assert "tasks" not in props
     assert "date" not in props
-    assert "dryRun" not in props
+    assert props["dryRun"]["type"] == "boolean"
 
 
 def test_wi7a_ac2_description_warns_about_user_wide_scope():

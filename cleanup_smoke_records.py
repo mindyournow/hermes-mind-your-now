@@ -36,6 +36,10 @@ def _calendar_events(client: MynApiClient) -> list[dict[str, Any]]:
     raise RuntimeError("Calendar event listing returned an unexpected response shape")
 
 
+def _find_event(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return next((item for item in events if str(item.get("id")) == EVENT_ID), None)
+
+
 def cleanup_stranded_records(client: MynApiClient) -> dict[str, str]:
     """Delete the two known smoke records after exact authorization and marker checks."""
     if os.getenv("HERMES_ALLOW_CLEANUP") != "1":
@@ -44,17 +48,23 @@ def cleanup_stranded_records(client: MynApiClient) -> dict[str, str]:
     results: dict[str, str] = {}
     task_path = f"/api/v2/unified-tasks/{TASK_ID}"
 
+    def validate_task(current: Any) -> None:
+        if not isinstance(current, dict):
+            raise RuntimeError(f"Task {TASK_ID} returned an unexpected response shape")
+        _require_smoke_marker(current, "task", TASK_ID)
+
     try:
-        task = client.get(task_path)
+        client.guarded_write(
+            "DELETE",
+            task_path,
+            get_path=task_path,
+            validate_current=validate_task,
+        )
     except MynApiError as exc:
         if exc.status != 404:
             raise
         results["task"] = "already_absent"
     else:
-        if not isinstance(task, dict):
-            raise RuntimeError(f"Task {TASK_ID} returned an unexpected response shape")
-        _require_smoke_marker(task, "task", TASK_ID)
-        client.guarded_write("DELETE", task_path, get_path=task_path)
         try:
             client.get(task_path)
         except MynApiError as exc:
@@ -65,11 +75,19 @@ def cleanup_stranded_records(client: MynApiClient) -> dict[str, str]:
             raise RuntimeError(f"Task {TASK_ID} still exists after deletion")
 
     events = _calendar_events(client)
-    event = next((item for item in events if str(item.get("id")) == EVENT_ID), None)
+    event = _find_event(events)
     if event is None:
         results["calendarEvent"] = "already_absent"
     else:
         _require_smoke_marker(event, "calendar event", EVENT_ID)
+        # The standalone-event endpoint has no state-hash guard. Re-read immediately
+        # before deletion and refuse if the marker-bearing representation changed.
+        current_event = _find_event(_calendar_events(client))
+        if current_event != event:
+            raise RuntimeError(
+                f"Refusing to delete calendar event {EVENT_ID}: record changed during validation"
+            )
+        _require_smoke_marker(current_event, "calendar event", EVENT_ID)
         client.delete(
             f"/api/v2/calendar/standalone-events/{EVENT_ID}",
             params={"calendarId": "primary"},

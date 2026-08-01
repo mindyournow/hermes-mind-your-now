@@ -292,7 +292,7 @@ def test_list_date_filters_use_inclusive_task_interval_overlap(filters, expected
 
     result = json.loads(build_handler(transport)(action="list", **filters))
 
-    assert observed_params == filters
+    assert observed_params == {**filters, "page": "0", "size": "200"}
     assert [task["id"] for task in result["data"]["tasks"]] == expected_ids
 
 
@@ -315,3 +315,62 @@ def test_list_date_filter_excludes_undated_tasks_but_keeps_single_date_tasks():
         "start-only",
         "end-only",
     ]
+
+
+def test_list_filters_and_offsets_across_all_server_pages():
+    observed_pages = []
+
+    def transport(request):
+        page = int(request.url.params["page"])
+        observed_pages.append(page)
+        start = page * 200
+        count = 200 if page == 0 else 50
+        return httpx.Response(
+            200,
+            json={
+                "tasks": [
+                    {
+                        "id": f"task-{index}",
+                        "priority": "CRITICAL",
+                        "startDate": "2026-08-01",
+                    }
+                    for index in range(start, start + count)
+                ]
+            },
+        )
+
+    result = json.loads(
+        build_handler(transport)(
+            action="list",
+            priority="CRITICAL",
+            offset=205,
+            limit=10,
+        )
+    )
+
+    assert observed_pages == [0, 1]
+    assert [task["id"] for task in result["data"]["tasks"]] == [
+        f"task-{index}" for index in range(205, 215)
+    ]
+    assert result["data"]["_totalCount"] == 250
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("limit", 1.5, "limit must be a positive integer"),
+        ("limit", 0, "limit must be a positive integer"),
+        ("offset", -1, "offset must be a non-negative integer"),
+        ("offset", 1.5, "offset must be a non-negative integer"),
+    ],
+)
+def test_list_rejects_invalid_pagination_before_request(field, value, message):
+    result = json.loads(
+        build_handler(lambda _request: pytest.fail("invalid pagination must not fetch"))(
+            action="list",
+            **{field: value},
+        )
+    )
+
+    assert result["success"] is False
+    assert result["error"] == message

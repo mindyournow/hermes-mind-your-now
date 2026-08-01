@@ -11,7 +11,13 @@ from typing import Any
 
 from mind_your_now.client import MynApiClient
 from mind_your_now.schemas import action_schema
-from mind_your_now.tools import register_myn_tool, tool_error, tool_result
+from mind_your_now.tools import (
+    fetch_all_unified_tasks,
+    register_myn_tool,
+    tool_error,
+    tool_result,
+    truncate,
+)
 
 
 HABITS_SCHEMA = action_schema(
@@ -27,7 +33,11 @@ HABITS_SCHEMA = action_schema(
             "default": 7,
             "description": "Number of days to look ahead",
         },
-        "limit": {"type": "number", "description": "Maximum habits to return (schedule action only)"},
+        "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum habits to return (schedule action only)",
+        },
     },
 )
 
@@ -65,26 +75,20 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
         return tool_result(client.get(path))
 
     if action == "schedule":
-        from mind_your_now.tools import truncate
+        limit = input_data.get("limit", 50)
+        if type(limit) is not int or limit < 1:
+            return tool_error("limit must be a positive integer")
+
         params = {"type": "HABIT"}
         if input_data.get("dateRange") is not None:
             params["days"] = input_data["dateRange"]
-        data = client.get("/api/v2/unified-tasks", params=params)
-
-        # Normalize bare array or wrapped response
-        if isinstance(data, list):
-            habits = data
-        elif isinstance(data, dict) and isinstance(data.get("tasks"), list):
-            habits = data["tasks"]
-        else:
+        data = fetch_all_unified_tasks(client, params=params)
+        if not isinstance(data, list):
             return tool_result(data)
 
-        # Defensively filter by taskType and apply limit
-        habits = [t for t in habits if t.get("taskType") == "HABIT"]
-        limit = input_data.get("limit", 50)
-        result = {"tasks": habits}
-        result = truncate(result, "tasks", int(limit))
-        return tool_result(result)
+        # Defensively filter because older servers may ignore the type parameter.
+        habits = [task for task in data if task.get("taskType") == "HABIT"]
+        return tool_result(truncate({"tasks": habits}, "tasks", limit))
 
     return tool_error(f"Unknown action: {action}")
 

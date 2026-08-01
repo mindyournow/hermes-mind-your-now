@@ -246,3 +246,35 @@ def test_cleanup_surfaces_non_404_verification_failure(monkeypatch):
         cleanup_stranded_records(client)
 
     assert exc_info.value.status == 500
+
+
+def test_cleanup_refuses_calendar_record_changed_after_marker_validation(monkeypatch):
+    from cleanup_smoke_records import EVENT_ID, TASK_ID, cleanup_stranded_records
+
+    monkeypatch.setenv("HERMES_ALLOW_CLEANUP", "1")
+    calendar_reads = 0
+
+    def transport(request):
+        nonlocal calendar_reads
+        if request.url.path.endswith(TASK_ID):
+            return httpx.Response(404)
+        if request.url.path == "/api/v2/calendar/events":
+            calendar_reads += 1
+            title = (
+                f"{SMOKE_MARKER}event"
+                if calendar_reads == 1
+                else "Real user event"
+            )
+            return httpx.Response(200, json={"events": [{"id": EVENT_ID, "title": title}]})
+        if request.method == "DELETE":
+            pytest.fail("changed calendar event must not be deleted")
+        return httpx.Response(500)
+
+    client = MynApiClient(
+        "https://api.example.com",
+        "test-key",
+        transport=httpx.MockTransport(transport),
+    )
+
+    with pytest.raises(RuntimeError, match="record changed during validation"):
+        cleanup_stranded_records(client)
