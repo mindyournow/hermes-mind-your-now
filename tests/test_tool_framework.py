@@ -113,7 +113,53 @@ def test_fetch_all_unified_tasks_reads_every_server_page():
     assert observed == [
         {"type": "HABIT", "page": "0", "size": "200"},
         {"type": "HABIT", "page": "1", "size": "200"},
+        {"type": "HABIT", "page": "0", "size": "200"},
     ]
+
+
+def test_fetch_all_unified_tasks_deduplicates_task_ids():
+    page_zero = [{"id": f"task-{index}"} for index in range(200)]
+    page_one = [{"id": "task-199"}, {"id": "task-200"}]
+
+    def transport(request):
+        page = int(request.url.params["page"])
+        return httpx.Response(200, json=page_zero if page == 0 else page_one)
+
+    client = MynApiClient(
+        "https://api.example.com",
+        "key",
+        transport=httpx.MockTransport(transport),
+    )
+
+    tasks = fetch_all_unified_tasks(client)
+
+    assert len(tasks) == 201
+    assert tasks[-1]["id"] == "task-200"
+    assert sum(task["id"] == "task-199" for task in tasks) == 1
+
+
+def test_fetch_all_unified_tasks_rejects_changed_first_page():
+    requests = 0
+    original = [{"id": f"task-{index}"} for index in range(200)]
+
+    def transport(request):
+        nonlocal requests
+        requests += 1
+        page = int(request.url.params["page"])
+        if page == 1:
+            return httpx.Response(200, json=[{"id": "task-200"}])
+        if requests == 3:
+            return httpx.Response(200, json=[{"id": "inserted"}, *original[:-1]])
+        return httpx.Response(200, json=original)
+
+    client = MynApiClient(
+        "https://api.example.com",
+        "key",
+        transport=httpx.MockTransport(transport),
+    )
+
+    with pytest.raises(RuntimeError, match="changed during pagination"):
+        fetch_all_unified_tasks(client)
 
 
 def test_fetch_all_unified_tasks_rejects_non_advancing_pages():

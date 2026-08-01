@@ -38,11 +38,13 @@ Every parameter in a tool's schema must be honored in the handler. No silent dro
 
 ## Rule 4: Honest Dry-Run Capabilities
 
-The list bulk actions `delete_checked` and `convert_to_tasks` support `dryRun: true`; the response includes the affected item set and a count without mutating the list. Planning `schedule_all` and `reschedule` dry-runs page through the complete unified-task collection, apply the controller's candidate rules, and return slimmed candidate tasks without invoking a scheduling endpoint.
+The list bulk actions `delete_checked` and `convert_to_tasks` support `dryRun: true`; the response includes the affected item set and a count without mutating the list. Planning `schedule_all` and `reschedule` dry-runs resolve the customer's configured timezone, page through the unified-task collection, mirror the controller's customer-local candidate rules, and return a bounded slim preview without invoking a scheduling endpoint.
 
 Caveats:
 - List dry-run is not item-scoped (no `itemIds` filter) — it applies to the full household list. Item scoping is tracked as MIN-932.
-- Planning dry-run identifies candidate tasks, but engine-selected dates and placements remain unavailable until MIN-932.
+- Planning dry-run identifies the full candidate count but returns at most `previewLimit` tasks (default 50, maximum 200) with truncation metadata.
+- Planning engine-selected dates and placements remain unavailable until MIN-932.
+- Unified-task pagination deduplicates IDs and rechecks the first page, but the API has no snapshot token; concurrent changes confined to later pages can still make counts best-effort.
 
 **Files:**
 - `src/mind_your_now/tools/lists.py` (delete_checked, convert_to_tasks)
@@ -80,3 +82,9 @@ The following improvements are blocked by MIN-932 (scoped planning and search):
 The habits `reminders` action was removed; restoration is blocked on MIN-932 and cross-references MIN-883.
 
 Project graph scoping is tracked as MIN-933.
+
+## Remaining API-Bound Safety Limits
+
+- The standalone calendar-event delete endpoint has no state-hash or conditional-write contract. The cleanup helper validates the smoke marker twice immediately before deletion, which reduces but cannot eliminate the check-delete race; a server-side conditional delete is required to close it.
+- Desired-state grocery toggles must read the checked-plus-unchecked collection because the API has no single-item read or desired-state write endpoint. Lists are normally small, but the upstream read remains collection-wide.
+- Small task and habit requests may still read every sequential task page so unsupported client-side filters, offsets, and exact truncation counts remain correct until MIN-932 adds reliable server-side filtering and pagination.

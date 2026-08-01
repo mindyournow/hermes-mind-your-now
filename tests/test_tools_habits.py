@@ -144,6 +144,6 @@ def test_schedule_honors_limit_beyond_first_server_page():
 
     result = json.loads(build_handler(transport)(action="schedule", limit=205))
 
-    assert observed_pages == [0, 1]
+    assert observed_pages == [0, 1, 0]
     assert len(result["data"]["tasks"]) == 205
     assert result["data"]["_totalCount"] == 210

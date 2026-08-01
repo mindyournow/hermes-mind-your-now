@@ -348,7 +348,7 @@ def test_list_filters_and_offsets_across_all_server_pages():
         )
     )
 
-    assert observed_pages == [0, 1]
+    assert observed_pages == [0, 1, 0]
     assert [task["id"] for task in result["data"]["tasks"]] == [
         f"task-{index}" for index in range(205, 215)
     ]

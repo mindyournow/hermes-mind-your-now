@@ -1,12 +1,14 @@
 import json
 import sys
 import types
-from datetime import date, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
 
 from mind_your_now.client import MynApiClient
+from mind_your_now.tools import planning
 from mind_your_now.tools.planning import register_planning_tool
 
 
@@ -87,6 +89,29 @@ def test_schema_advertises_implemented_read_only_dry_run():
     )
 
 
+@pytest.fixture
+def customer_now(monkeypatch):
+    zone = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 8, 1, 23, 30, tzinfo=zone)
+    monkeypatch.setattr(planning, "_now_in_zone", lambda resolved_zone: now)
+    return now
+
+
+def planning_transport(tasks, observed):
+    def transport(request):
+        observed.append((request.method, request.url.path, dict(request.url.params)))
+        assert request.method == "GET"
+        if request.url.path == "/api/v1/customers":
+            return httpx.Response(
+                200,
+                json={"defaultTimeZone": "America/Los_Angeles"},
+            )
+        assert request.url.path == "/api/v2/unified-tasks"
+        return httpx.Response(200, json={"tasks": tasks})
+
+    return transport
+
+
 @pytest.mark.parametrize(
     ("action", "spread_over_days", "expected_ids"),
     [
@@ -95,18 +120,17 @@ def test_schema_advertises_implemented_read_only_dry_run():
         ("reschedule", 3, ["eligible", "future"]),
     ],
 )
-def test_dry_run_returns_candidate_set_without_mutation(
-    action, spread_over_days, expected_ids
+def test_dry_run_returns_customer_local_candidates_without_mutation(
+    customer_now, action, spread_over_days, expected_ids
 ):
     observed = []
-    today = date.today()
     tasks = [
         {
             "id": "eligible",
             "title": "Eligible",
             "taskType": "TASK",
             "priority": "CRITICAL",
-            "startDate": today.isoformat(),
+            "startDate": "2026-08-02T06:30:00Z",
             "isCompleted": False,
             "isAutoScheduled": False,
         },
@@ -115,7 +139,7 @@ def test_dry_run_returns_candidate_set_without_mutation(
             "title": "Future",
             "taskType": "TASK",
             "priority": "CRITICAL",
-            "startDate": (today + timedelta(days=2)).isoformat(),
+            "startDate": "2026-08-03T07:00:00Z",
             "isCompleted": False,
             "isAutoScheduled": False,
         },
@@ -124,7 +148,7 @@ def test_dry_run_returns_candidate_set_without_mutation(
             "title": "Completed",
             "taskType": "TASK",
             "priority": "CRITICAL",
-            "startDate": today.isoformat(),
+            "startDate": "2026-08-02T06:30:00Z",
             "isCompleted": True,
             "isAutoScheduled": False,
         },
@@ -133,19 +157,14 @@ def test_dry_run_returns_candidate_set_without_mutation(
             "title": "Habit",
             "taskType": "HABIT",
             "priority": "CRITICAL",
-            "startDate": today.isoformat(),
+            "startDate": "2026-08-02T06:30:00Z",
             "isCompleted": False,
             "isAutoScheduled": False,
         },
     ]
 
-    def transport(request):
-        observed.append((request.method, request.url.path, dict(request.url.params)))
-        assert request.method == "GET"
-        return httpx.Response(200, json={"tasks": tasks})
-
     result = json.loads(
-        build_handler(transport)(
+        build_handler(planning_transport(tasks, observed))(
             action=action,
             spreadOverDays=spread_over_days,
             dryRun=True,
@@ -153,11 +172,130 @@ def test_dry_run_returns_candidate_set_without_mutation(
     )
 
     assert observed == [
-        ("GET", "/api/v2/unified-tasks", {"page": "0", "size": "200"})
+        ("GET", "/api/v1/customers", {}),
+        ("GET", "/api/v2/unified-tasks", {"page": "0", "size": "200"}),
     ]
     assert result["success"] is True
     assert [task["id"] for task in result["data"]["tasks"]] == expected_ids
     assert result["data"]["count"] == len(expected_ids)
+    assert result["data"]["customerTimeZone"] == "America/Los_Angeles"
     assert result["data"]["dryRun"] is True
     assert result["data"]["engineDecisionsPreviewed"] is False
     assert "MIN-932" in result["data"]["message"]
+
+
+def test_schedule_all_includes_exact_next_local_midnight(customer_now):
+    observed = []
+    tasks = [
+        {
+            "id": "at-cutoff",
+            "priority": "CRITICAL",
+            "startDate": "2026-08-02T07:00:00Z",
+        },
+        {
+            "id": "after-cutoff",
+            "priority": "CRITICAL",
+            "startDate": "2026-08-02T07:00:00.001Z",
+        },
+    ]
+
+    result = json.loads(
+        build_handler(planning_transport(tasks, observed))(
+            action="schedule_all",
+            dryRun=True,
+        )
+    )
+
+    assert [task["id"] for task in result["data"]["tasks"]] == ["at-cutoff"]
+
+
+def test_reschedule_uses_customer_local_date_boundary(customer_now):
+    observed = []
+    tasks = [
+        {
+            "id": "customer-today",
+            "taskType": "TASK",
+            "startDate": "2026-08-02T06:59:59Z",
+        },
+        {
+            "id": "customer-tomorrow",
+            "taskType": "TASK",
+            "startDate": "2026-08-02T07:00:00Z",
+        },
+    ]
+
+    result = json.loads(
+        build_handler(planning_transport(tasks, observed))(
+            action="reschedule",
+            spreadOverDays=1,
+            dryRun=True,
+        )
+    )
+
+    assert [task["id"] for task in result["data"]["tasks"]] == [
+        "customer-today"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("preview_limit", "expected_length"),
+    [(None, 50), (2, 2)],
+)
+def test_dry_run_preview_limit_preserves_full_count(
+    customer_now, preview_limit, expected_length
+):
+    observed = []
+    tasks = [
+        {
+            "id": f"task-{index:03d}",
+            "priority": "CRITICAL",
+            "startDate": "2026-08-01T12:00:00Z",
+        }
+        for index in range(60)
+    ]
+    arguments = {"action": "schedule_all", "dryRun": True}
+    if preview_limit is not None:
+        arguments["previewLimit"] = preview_limit
+
+    result = json.loads(
+        build_handler(planning_transport(tasks, observed))(**arguments)
+    )
+
+    assert len(result["data"]["tasks"]) == expected_length
+    assert result["data"]["count"] == 60
+    assert result["data"]["_truncated"] is True
+    assert result["data"]["_totalCount"] == 60
+
+
+@pytest.mark.parametrize("preview_limit", [0, 201, 1.5, True])
+def test_dry_run_rejects_invalid_preview_limit_before_api_request(preview_limit):
+    requests = []
+
+    result = json.loads(
+        build_handler(lambda request: requests.append(request))(
+            action="schedule_all",
+            dryRun=True,
+            previewLimit=preview_limit,
+        )
+    )
+
+    assert result["success"] is False
+    assert "previewLimit" in result["error"]
+    assert requests == []
+
+
+def test_plan_rejects_dry_run_before_api_request():
+    requests = []
+
+    result = json.loads(
+        build_handler(lambda request: requests.append(request))(
+            action="plan",
+            dryRun=True,
+        )
+    )
+
+    assert result == {
+        "success": False,
+        "error": "dryRun is supported only for schedule_all and reschedule",
+    }
+    assert requests == []

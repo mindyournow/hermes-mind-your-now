@@ -41,37 +41,65 @@ def fetch_all_unified_tasks(
 ) -> Any:
     """Retrieve every page from the unified-task endpoint.
 
-    The API defaults to 50 records and caps pages at 200. Client-side filters and
-    pagination must operate on the complete collection, not the first server page.
+    The API defaults to 50 records and caps pages at 200. Results are deduplicated by
+    task ID, and multi-page scans re-read page zero to detect boundary shifts there.
+    The API exposes no snapshot token, so mutations confined to later pages can still
+    make the result a best-effort collection rather than a transactional snapshot.
     Unexpected first-page shapes are returned unchanged for backward compatibility.
     """
     page_size = 200
     page = 0
     tasks: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
     seen_page_signatures: set[tuple[str, ...]] = set()
+    first_page_signature: tuple[str, ...] | None = None
+
+    def page_tasks(data: Any) -> list[dict[str, Any]] | None:
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and isinstance(data.get("tasks"), list):
+            return data["tasks"]
+        return None
+
+    def signature(items: list[dict[str, Any]]) -> tuple[str, ...]:
+        return tuple(
+            str(task.get("id", f"missing-id-{index}"))
+            for index, task in enumerate(items)
+        )
 
     while True:
         page_params = {**(params or {}), "page": page, "size": page_size}
         data = client.get("/api/v2/unified-tasks", params=page_params)
-        if isinstance(data, list):
-            page_tasks = data
-        elif isinstance(data, dict) and isinstance(data.get("tasks"), list):
-            page_tasks = data["tasks"]
-        elif page == 0:
-            return data
-        else:
+        current_page = page_tasks(data)
+        if current_page is None:
+            if page == 0:
+                return data
             raise RuntimeError("Unified-task pagination returned an unexpected response shape")
 
-        signature = tuple(
-            str(task.get("id", f"missing-id-{index}"))
-            for index, task in enumerate(page_tasks)
-        )
-        if signature in seen_page_signatures:
+        current_signature = signature(current_page)
+        if page == 0:
+            first_page_signature = current_signature
+        if current_signature in seen_page_signatures:
             raise RuntimeError("Unified-task pagination did not advance")
-        seen_page_signatures.add(signature)
-        tasks.extend(page_tasks)
+        seen_page_signatures.add(current_signature)
 
-        if len(page_tasks) < page_size:
+        for task in current_page:
+            task_id = task.get("id")
+            if task_id is not None:
+                task_key = str(task_id)
+                if task_key in seen_task_ids:
+                    continue
+                seen_task_ids.add(task_key)
+            tasks.append(task)
+
+        if len(current_page) < page_size:
+            if page > 0:
+                check_params = {**(params or {}), "page": 0, "size": page_size}
+                check_page = page_tasks(
+                    client.get("/api/v2/unified-tasks", params=check_params)
+                )
+                if check_page is None or signature(check_page) != first_page_signature:
+                    raise RuntimeError("Unified-task collection changed during pagination")
             return tasks
         page += 1
 

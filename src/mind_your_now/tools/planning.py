@@ -10,8 +10,9 @@ The planning engine's resulting dates and placements cannot be previewed until M
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from mind_your_now.client import MynApiClient
 from mind_your_now.schemas import action_schema
@@ -20,6 +21,7 @@ from mind_your_now.tools import (
     register_myn_tool,
     tool_error,
     tool_result,
+    truncate,
 )
 
 
@@ -38,18 +40,53 @@ PLANNING_SCHEMA = action_schema(
                 "engine (schedule_all and reschedule only). Engine decisions are not previewed."
             ),
         },
+        "previewLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50,
+            "description": "Maximum candidate tasks returned by dryRun; count remains the full candidate count.",
+        },
     },
 )
 
 
-def _task_date(task: dict[str, Any]) -> date | None:
+def _customer_zone(client: MynApiClient) -> ZoneInfo:
+    data = client.get("/api/v1/customers")
+    if not isinstance(data, dict):
+        raise RuntimeError("Customer profile returned an unexpected response shape")
+    customer = data.get("customer") if isinstance(data.get("customer"), dict) else data
+    zone_name = (
+        customer.get("defaultTimeZone")
+        or customer.get("timeZone")
+        or customer.get("timezone")
+    )
+    if not zone_name:
+        raise RuntimeError("Customer profile does not contain defaultTimeZone")
+    try:
+        return ZoneInfo(str(zone_name))
+    except ZoneInfoNotFoundError as exc:
+        raise RuntimeError(f"Unknown customer timezone: {zone_name}") from exc
+
+
+def _now_in_zone(zone: ZoneInfo) -> datetime:
+    return datetime.now(zone)
+
+
+def _task_start(task: dict[str, Any], zone: ZoneInfo) -> datetime | None:
     value = task.get("startDate")
     if value is None:
         return None
+    text = str(value)
     try:
-        return date.fromisoformat(str(value)[:10])
+        if len(text) == 10:
+            return datetime.combine(date.fromisoformat(text), time.min, tzinfo=zone)
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(zone)
 
 
 def _is_completed(task: dict[str, Any]) -> bool:
@@ -69,30 +106,44 @@ def _is_recurring(task: dict[str, Any]) -> bool:
     )
 
 
-def _schedule_all_candidates(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    today = date.today()
+def _schedule_all_candidates(
+    tasks: list[dict[str, Any]],
+    *,
+    zone: ZoneInfo,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    end_of_today = datetime.combine(
+        now.date() + timedelta(days=1),
+        time.min,
+        tzinfo=zone,
+    )
     eligible = [
         task
         for task in tasks
-        if (task_date := _task_date(task)) is not None
-        and task_date <= today
+        if (task_start := _task_start(task, zone)) is not None
+        and task_start <= end_of_today
         and task.get("priority") not in {"OVER_THE_HORIZON", "PARKING_LOT"}
         and not _is_completed(task)
     ]
     opportunity = sorted(
         (task for task in eligible if task.get("priority") == "OPPORTUNITY_NOW"),
-        key=lambda task: _task_date(task) or today,
+        key=lambda task: _task_start(task, zone) or end_of_today,
     )[:10]
     other = [task for task in eligible if task.get("priority") != "OPPORTUNITY_NOW"]
-    return sorted([*other, *opportunity], key=lambda task: _task_date(task) or today)
+    return sorted(
+        [*other, *opportunity],
+        key=lambda task: _task_start(task, zone) or end_of_today,
+    )
 
 
 def _reschedule_candidates(
     tasks: list[dict[str, Any]],
     *,
     rebalance: bool,
+    zone: ZoneInfo,
+    now: datetime,
 ) -> list[dict[str, Any]]:
-    today = date.today()
+    latest = datetime.max.replace(tzinfo=zone)
     return sorted(
         (
             task
@@ -100,9 +151,12 @@ def _reschedule_candidates(
             if not _is_completed(task)
             and not bool(task.get("isAutoScheduled"))
             and not _is_recurring(task)
-            and (rebalance or ((_task_date(task) or date.max) <= today))
+            and (
+                rebalance
+                or ((_task_start(task, zone) or latest).date() <= now.date())
+            )
         ),
-        key=lambda task: _task_date(task) or date.max,
+        key=lambda task: _task_start(task, zone) or latest,
     )
 
 
@@ -127,45 +181,75 @@ def _dry_run_preview(
     client: MynApiClient,
     *,
     action: str,
+    preview_limit: int,
     rebalance: bool = False,
 ) -> str:
+    zone = _customer_zone(client)
+    now = _now_in_zone(zone)
     data = fetch_all_unified_tasks(client)
     if not isinstance(data, list):
         return tool_error("Unable to read the task collection for planning dryRun")
 
     if action == "schedule_all":
-        candidates = _schedule_all_candidates(data)
+        candidates = _schedule_all_candidates(data, zone=zone, now=now)
     else:
-        candidates = _reschedule_candidates(data, rebalance=rebalance)
+        candidates = _reschedule_candidates(
+            data,
+            rebalance=rebalance,
+            zone=zone,
+            now=now,
+        )
 
     tasks = [_slim_preview_task(task) for task in candidates]
-    return tool_result(
+    payload = truncate(
         {
             "dryRun": True,
             "action": action,
             "tasks": tasks,
             "count": len(tasks),
+            "customerTimeZone": str(zone),
             "engineDecisionsPreviewed": False,
             "message": (
-                "Read-only candidate task preview. The planning engine's resulting dates "
-                "and placements cannot be previewed until MIN-932."
+                "Read-only candidate task preview in the customer's configured timezone. "
+                "The planning engine's resulting dates and placements cannot be previewed "
+                "until MIN-932. Multi-page reads are deduplicated and boundary-checked but "
+                "are not a transactional snapshot because the API exposes no snapshot token."
             ),
-        }
+        },
+        "tasks",
+        preview_limit,
     )
+    return tool_result(payload)
 
 
 def execute_planning(client: MynApiClient, **input_data: Any) -> str:
     action = input_data.get("action")
+    preview_limit = input_data.get("previewLimit", 50)
+    if input_data.get("dryRun"):
+        if action == "plan":
+            return tool_error("dryRun is supported only for schedule_all and reschedule")
+        if type(preview_limit) is not int or not 1 <= preview_limit <= 200:
+            return tool_error("previewLimit must be an integer between 1 and 200")
+
     if action == "plan":
         return tool_result({"result": client.get("/planning/plan")})
     if action == "schedule_all":
         if input_data.get("dryRun"):
-            return _dry_run_preview(client, action=action)
+            return _dry_run_preview(
+                client,
+                action=action,
+                preview_limit=preview_limit,
+            )
         return tool_result({"result": client.post("/planning/scheduleAll", {})})
     if action == "reschedule":
         rebalance = (input_data.get("spreadOverDays") or 0) > 1
         if input_data.get("dryRun"):
-            return _dry_run_preview(client, action=action, rebalance=rebalance)
+            return _dry_run_preview(
+                client,
+                action=action,
+                preview_limit=preview_limit,
+                rebalance=rebalance,
+            )
         return tool_result(
             client.post(
                 "/planning/kickTheCan",

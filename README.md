@@ -99,7 +99,7 @@ Timers created through `myn_timers` include `sourceAgentName` and `sourceChannel
 
 Tools that return lists (`list_tasks`, `list_events`, `list_habits`, `list_projects`, `recall`, etc.) apply client-side limits and mark truncated results with `_truncated: true` and `_totalCount` so the model knows it's looking at a slice. Task and habit reads iterate the API's 200-record pages before applying client-side filters and offsets. `myn_ynab.list_transactions` requires `sinceDate` (or the `date` alias) so the upstream financial-data read is bounded.
 
-Bulk list actions and the `schedule_all`/`reschedule` planning actions support `dryRun`; planning dry-runs return the candidate task set without invoking a scheduling endpoint, while the engine's resulting dates and placements remain unavailable until MIN-932. These markers and capability boundaries prevent the model from mistaking partial previews for complete engine decisions.
+Bulk list actions and the `schedule_all`/`reschedule` planning actions support `dryRun`; planning dry-runs use the customer's configured timezone and return the full candidate count plus up to `previewLimit` slimmed tasks (default 50, maximum 200) without invoking a scheduling endpoint. The engine's resulting dates and placements remain unavailable until MIN-932. These markers and capability boundaries prevent the model from mistaking a bounded candidate preview for complete engine decisions.
 
 ## Kaia memory injection
 
@@ -146,10 +146,10 @@ The Python port carries the OpenClaw plugin's security fixes forward and adds th
 
 ## Tool result redaction
 
-Each tool returns its result through `tool_result()` in `src/mind_your_now/tools/__init__.py` (line 16). This function recursively walks the payload and redacts any value whose key matches a secret pattern:
+Each tool returns its result through `tool_result()` in `src/mind_your_now/tools/__init__.py`. This function recursively walks the payload and redacts any value whose key matches a secret pattern:
 
 ```regex
-(?i)(access|refresh|id)_?token|secret|client_?secret|api_?key|password|credential
+(?i)(?:^token$|^authorization$|^cookie$|(?:access|refresh|id|session)_?token|secret|api_?key|password|credential|myn_?inbound_?key|agent_?key)
 ```
 
 Redacted values are replaced with the string `[REDACTED]`. This is a backstop against future server regressions: if a future MYN API update accidentally includes a credential in a tool response, this redaction layer prevents it from reaching the agent's context window or Hermes logs.
