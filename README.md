@@ -138,6 +138,18 @@ The Python port carries the OpenClaw plugin's security fixes forward and adds th
 - **S7 — Handler self-guarding:** each tool checks configuration inside its handler because Hermes's `check_fn` controls visibility but does not gate dispatch.
 - **S8 — Credential permissions:** MYN config and A2A credential writers enforce mode `0600`.
 
+## Tool result redaction
+
+Each tool returns its result through `tool_result()` in `src/mind_your_now/tools/__init__.py` (line 16). This function recursively walks the payload and redacts any value whose key matches a secret pattern:
+
+```regex
+(?i)(access|refresh|id)_?token|secret|client_?secret|api_?key|password|credential
+```
+
+Redacted values are replaced with the string `[REDACTED]`. This is a backstop against future server regressions: if a future MYN API update accidentally includes a credential in a tool response, this redaction layer prevents it from reaching the agent's context window or Hermes logs.
+
+The redaction is auth-agnostic — it applies to all tool results regardless of the operation. It is not a replacement for the server-side data-minimization gates (see `docs/AGENT-DATA-EXPOSURE.md` in the MYN main repo for server-side rules), but a second line of defense.
+
 ## Deploy to Fly.io
 
 For `hermes-eltmon`, build and upload a wheel to the persistent volume:
