@@ -49,13 +49,14 @@ def execute_memory(client: MynApiClient, **input_data: Any) -> str:
         return tool_result(client.post("/api/v1/agent/memories", body))
 
     if action == "recall":
+        limit = input_data.get("limit")
         data = client.get(
             "/api/v1/customers/memories",
-            params={"limit": MEMORY_FETCH_LIMIT},
+            params={"limit": MEMORY_FETCH_LIMIT if limit is None else limit},
         )
+        memories = data.get("memories", []) if isinstance(data, dict) else []
         memory_id = input_data.get("memoryId")
         if memory_id:
-            memories = data if isinstance(data, list) else []
             match = next(
                 (
                     memory
@@ -67,7 +68,7 @@ def execute_memory(client: MynApiClient, **input_data: Any) -> str:
             if not match:
                 return tool_error(f"Memory not found: {memory_id}")
             return tool_result(match)
-        return tool_result(data)
+        return tool_result(memories)
 
     if action == "forget":
         memory_id = input_data.get("memoryId")

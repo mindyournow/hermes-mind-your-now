@@ -128,6 +128,30 @@ def test_each_action_uses_expected_method_and_path(
     assert result["success"] is True
 
 
+def test_list_sends_limit_and_unwraps_tasks_envelope():
+    observed_params = None
+    tasks = [{"id": TASK_ID, "title": "Plan week"}]
+
+    def transport(request):
+        nonlocal observed_params
+        observed_params = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={
+                "tasks": tasks,
+                "total": 1,
+                "limit": 7,
+                "offset": 0,
+                "hasMore": False,
+            },
+        )
+
+    result = json.loads(build_handler(transport)(action="list", limit=7))
+
+    assert observed_params == {"limit": "7"}
+    assert result["data"] == tasks
+
+
 def test_update_filters_unknown_fields_and_reports_dropped_fields():
     observed_body = None
 

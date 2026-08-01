@@ -31,12 +31,14 @@ def execute_projects(client: MynApiClient, **input_data: Any) -> str:
     action = input_data.get("action")
 
     if action == "list":
-        params = {}
+        params = {"limit": 50}
         if input_data.get("includeArchived"):
             params["includeArchived"] = "true"
         if input_data.get("includeStats"):
             params["includeStats"] = "true"
-        return tool_result(client.get("/api/project/defaults", params=params))
+        data = client.get("/api/project/defaults", params=params)
+        projects = data.get("projects", []) if isinstance(data, dict) else []
+        return tool_result(projects)
 
     if action == "get":
         project_id = input_data.get("projectId")

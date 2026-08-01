@@ -56,7 +56,13 @@ def build_handler(transport):
             {"action": "recall"},
             "GET",
             "/api/v1/customers/memories",
-            [],
+            {
+                "memories": [],
+                "totalCount": 0,
+                "limit": 50,
+                "offset": 0,
+                "hasMore": False,
+            },
         ),
         (
             {"action": "forget", "memoryId": MEMORY_ID},
@@ -113,6 +119,30 @@ def test_memory_search_uses_context_endpoint_with_encoded_params():
     assert result == {"success": True, "data": payload}
 
 
+def test_recall_sends_limit_and_unwraps_memories_envelope():
+    observed_params = None
+    memories = [{"memoryId": MEMORY_ID, "content": "Remembered"}]
+
+    def transport(request):
+        nonlocal observed_params
+        observed_params = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={
+                "memories": memories,
+                "totalCount": 1,
+                "limit": 7,
+                "offset": 0,
+                "hasMore": False,
+            },
+        )
+
+    result = json.loads(build_handler(transport)(action="recall", limit=7))
+
+    assert observed_params == {"limit": "7"}
+    assert result["data"] == memories
+
+
 def test_recall_filters_by_memory_id_after_bounded_fetch():
     observed_params = None
 
@@ -121,10 +151,16 @@ def test_recall_filters_by_memory_id_after_bounded_fetch():
         observed_params = dict(request.url.params)
         return httpx.Response(
             200,
-            json=[
-                {"memoryId": MEMORY_ID, "content": "Match"},
-                {"memoryId": "other", "content": "Other"},
-            ],
+            json={
+                "memories": [
+                    {"memoryId": MEMORY_ID, "content": "Match"},
+                    {"memoryId": "other", "content": "Other"},
+                ],
+                "totalCount": 2,
+                "limit": 50,
+                "offset": 0,
+                "hasMore": False,
+            },
         )
 
     result = json.loads(

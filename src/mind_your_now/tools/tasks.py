@@ -165,12 +165,15 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
                 "projectId",
                 "startDate",
                 "endDate",
-                "limit",
                 "offset",
             )
             if input_data.get(key) is not None
         }
-        return tool_result(client.get("/api/v2/unified-tasks", params=params))
+        limit = input_data.get("limit")
+        params["limit"] = 20 if limit is None else limit
+        data = client.get("/api/v2/unified-tasks", params=params)
+        tasks = data.get("tasks", []) if isinstance(data, dict) else []
+        return tool_result(tasks)
 
     if action in {"get", "update", "complete", "archive"}:
         task_id = input_data.get("taskId")
