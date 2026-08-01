@@ -38,7 +38,7 @@ Every parameter in a tool's schema must be honored in the handler. No silent dro
 
 ## Rule 4: Honest Dry-Run Capabilities
 
-The list bulk actions `delete_checked` and `convert_to_tasks` support `dryRun: true`; the response includes the affected item set and a count without mutating the list. Planning `schedule_all` and `reschedule` dry-runs resolve the customer's configured timezone, page through the unified-task collection, mirror the controller's customer-local candidate rules, and return a bounded slim preview without invoking a scheduling endpoint.
+The list bulk actions `delete_checked` and `convert_to_tasks` support `dryRun: true`; the response includes the affected item set and a count without mutating the list. Planning `schedule_all` and `reschedule` dry-runs resolve customer identity and timezone through the API-key-only, side-effect-free `/api/v1/customers/planning-context` endpoint, exclude tasks merely assigned to the customer, page through the unified-task collection, mirror the controller's customer-local candidate rules, and return a bounded slim preview without invoking a scheduling endpoint.
 
 Caveats:
 - List dry-run is not item-scoped (no `itemIds` filter) — it applies to the full household list. Item scoping is tracked as MIN-932.

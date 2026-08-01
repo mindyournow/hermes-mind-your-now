@@ -101,13 +101,24 @@ def planning_transport(tasks, observed):
     def transport(request):
         observed.append((request.method, request.url.path, dict(request.url.params)))
         assert request.method == "GET"
-        if request.url.path == "/api/v1/customers":
+        if request.url.path == "/api/v1/customers/planning-context":
             return httpx.Response(
                 200,
-                json={"defaultTimeZone": "America/Los_Angeles"},
+                json={
+                    "id": 42,
+                    "defaultTimeZone": "America/Los_Angeles",
+                },
             )
         assert request.url.path == "/api/v2/unified-tasks"
-        return httpx.Response(200, json={"tasks": tasks})
+        return httpx.Response(
+            200,
+            json={
+                "tasks": [
+                    {"ownerId": 42, **task}
+                    for task in tasks
+                ]
+            },
+        )
 
     return transport
 
@@ -172,7 +183,7 @@ def test_dry_run_returns_customer_local_candidates_without_mutation(
     )
 
     assert observed == [
-        ("GET", "/api/v1/customers", {}),
+        ("GET", "/api/v1/customers/planning-context", {}),
         ("GET", "/api/v2/unified-tasks", {"page": "0", "size": "200"}),
     ]
     assert result["success"] is True
@@ -182,6 +193,51 @@ def test_dry_run_returns_customer_local_candidates_without_mutation(
     assert result["data"]["dryRun"] is True
     assert result["data"]["engineDecisionsPreviewed"] is False
     assert "MIN-932" in result["data"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("action", "spread_over_days"),
+    [
+        ("schedule_all", 1),
+        ("reschedule", 1),
+        ("reschedule", 3),
+    ],
+)
+def test_dry_run_excludes_tasks_only_assigned_to_customer(
+    customer_now, action, spread_over_days
+):
+    observed = []
+    tasks = [
+        {
+            "id": "owned",
+            "ownerId": 42,
+            "taskType": "TASK",
+            "priority": "CRITICAL",
+            "startDate": "2026-08-02T06:30:00Z",
+            "isCompleted": False,
+            "isAutoScheduled": False,
+        },
+        {
+            "id": "assigned",
+            "ownerId": 99,
+            "taskType": "TASK",
+            "priority": "CRITICAL",
+            "startDate": "2026-08-02T06:30:00Z",
+            "isCompleted": False,
+            "isAutoScheduled": False,
+        },
+    ]
+
+    result = json.loads(
+        build_handler(planning_transport(tasks, observed))(
+            action=action,
+            spreadOverDays=spread_over_days,
+            dryRun=True,
+        )
+    )
+
+    assert [task["id"] for task in result["data"]["tasks"]] == ["owned"]
+    assert result["data"]["count"] == 1
 
 
 def test_schedule_all_includes_exact_next_local_midnight(customer_now):

@@ -21,7 +21,6 @@ from mind_your_now.tools import (
     register_myn_tool,
     tool_error,
     tool_result,
-    truncate,
 )
 
 
@@ -51,22 +50,23 @@ PLANNING_SCHEMA = action_schema(
 )
 
 
-def _customer_zone(client: MynApiClient) -> ZoneInfo:
-    data = client.get("/api/v1/customers")
+def _planning_context(client: MynApiClient) -> tuple[str, ZoneInfo]:
+    data = client.get("/api/v1/customers/planning-context")
     if not isinstance(data, dict):
-        raise RuntimeError("Customer profile returned an unexpected response shape")
-    customer = data.get("customer") if isinstance(data.get("customer"), dict) else data
-    zone_name = (
-        customer.get("defaultTimeZone")
-        or customer.get("timeZone")
-        or customer.get("timezone")
-    )
+        raise RuntimeError("Planning context returned an unexpected response shape")
+
+    customer_id = data.get("id")
+    zone_name = data.get("defaultTimeZone")
+    if customer_id is None:
+        raise RuntimeError("Planning context does not contain a customer ID")
     if not zone_name:
-        raise RuntimeError("Customer profile does not contain defaultTimeZone")
+        raise RuntimeError("Planning context does not contain defaultTimeZone")
+
     try:
-        return ZoneInfo(str(zone_name))
+        zone = ZoneInfo(str(zone_name))
     except ZoneInfoNotFoundError as exc:
         raise RuntimeError(f"Unknown customer timezone: {zone_name}") from exc
+    return str(customer_id), zone
 
 
 def _now_in_zone(zone: ZoneInfo) -> datetime:
@@ -184,41 +184,51 @@ def _dry_run_preview(
     preview_limit: int,
     rebalance: bool = False,
 ) -> str:
-    zone = _customer_zone(client)
+    customer_id, zone = _planning_context(client)
     now = _now_in_zone(zone)
     data = fetch_all_unified_tasks(client)
     if not isinstance(data, list):
         return tool_error("Unable to read the task collection for planning dryRun")
 
+    owned_tasks = [
+        task
+        for task in data
+        if task.get("ownerId") is not None
+        and str(task["ownerId"]) == customer_id
+    ]
     if action == "schedule_all":
-        candidates = _schedule_all_candidates(data, zone=zone, now=now)
+        candidates = _schedule_all_candidates(owned_tasks, zone=zone, now=now)
     else:
         candidates = _reschedule_candidates(
-            data,
+            owned_tasks,
             rebalance=rebalance,
             zone=zone,
             now=now,
         )
 
-    tasks = [_slim_preview_task(task) for task in candidates]
-    payload = truncate(
-        {
-            "dryRun": True,
-            "action": action,
-            "tasks": tasks,
-            "count": len(tasks),
-            "customerTimeZone": str(zone),
-            "engineDecisionsPreviewed": False,
-            "message": (
-                "Read-only candidate task preview in the customer's configured timezone. "
-                "The planning engine's resulting dates and placements cannot be previewed "
-                "until MIN-932. Multi-page reads are deduplicated and boundary-checked but "
-                "are not a transactional snapshot because the API exposes no snapshot token."
-            ),
-        },
-        "tasks",
-        preview_limit,
-    )
+    candidate_count = len(candidates)
+    tasks = [
+        _slim_preview_task(task)
+        for task in candidates[:preview_limit]
+    ]
+    payload = {
+        "dryRun": True,
+        "action": action,
+        "tasks": tasks,
+        "count": candidate_count,
+        "customerTimeZone": str(zone),
+        "engineDecisionsPreviewed": False,
+        "message": (
+            "Read-only candidate task preview in the customer's configured timezone. "
+            "Only tasks owned by the customer are included, matching live planning. "
+            "The planning engine's resulting dates and placements cannot be previewed "
+            "until MIN-932. Multi-page reads are deduplicated and boundary-checked but "
+            "are not a transactional snapshot because the API exposes no snapshot token."
+        ),
+    }
+    if len(tasks) < candidate_count:
+        payload["_truncated"] = True
+        payload["_totalCount"] = candidate_count
     return tool_result(payload)
 
 
