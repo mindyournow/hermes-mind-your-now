@@ -35,24 +35,14 @@ def execute_planning(client: MynApiClient, **input_data: Any) -> str:
         return tool_result({"result": client.get("/planning/plan")})
     if action == "schedule_all":
         if input_data.get("dryRun"):
-            # Dry run: return unsupported message without calling mutating endpoint
-            return tool_result({
-                "dryRun": True,
-                "tasks": [],
-                "count": 0,
-                "message": "dryRun is not supported for schedule_all until MIN-932 adds server-side preview. Use schedule_all without dryRun to apply scheduling."
-            })
+            # dryRun is not supported until MIN-932 adds server-side preview capability
+            return tool_error("dryRun is not supported for schedule_all. Server-side preview is tracked by MIN-932. Use schedule_all without dryRun to apply scheduling.")
         return tool_result({"result": client.post("/planning/scheduleAll", {})})
     if action == "reschedule":
         rebalance = "true" if (input_data.get("spreadOverDays") or 0) > 1 else "false"
         if input_data.get("dryRun"):
-            # Dry run: return unsupported message without calling mutating endpoint
-            return tool_result({
-                "dryRun": True,
-                "tasks": [],
-                "count": 0,
-                "message": "dryRun is not supported for reschedule until MIN-932 adds server-side preview. Use reschedule without dryRun to apply rescheduling."
-            })
+            # dryRun is not supported until MIN-932 adds server-side preview capability
+            return tool_error("dryRun is not supported for reschedule. Server-side preview is tracked by MIN-932. Use reschedule without dryRun to apply rescheduling.")
         return tool_result(
             client.post(
                 "/planning/kickTheCan",

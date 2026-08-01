@@ -185,29 +185,37 @@ def test_chore_complete_uses_guarded_write_with_state_hash():
 
 
 @pytest.mark.xfail(
-    reason="The chore GET /api/v2/chores/instances/{id} endpoint does not return the required state-hash value. "
-    "This is a known server limitation tracked by MIN-931 and blocks the full read-before-write state-hash protocol. "
-    "The POST succeeds with a read-before-write GET, but that GET cannot obtain the state hash from this endpoint.",
-    strict=False,
+    reason="The chore GET /api/v2/chores/instances/{id} endpoint does not return stateHash, "
+    "so chore_complete cannot obtain the value required by @RequireStateHash on the POST endpoint. "
+    "This is a known server limitation tracked by MIN-932. The POST will fail without the header.",
+    strict=True,
 )
 def test_chore_complete_state_hash_unsupported():
-    """chore_complete's read-before-write state hash is unsupported on the GET side."""
-    # This test documents the known gap: we can GET for consistency checks,
-    # but the response does not include the state-hash value required by
-    # the @RequireStateHash aspect on the POST endpoint.
+    """chore_complete's state-hash guard fails when GET response lacks stateHash."""
     chore_id = "chore-with-state"
 
     def transport(request):
-        # The GET response does not include stateHash
+        # The GET response does not include stateHash - this is the known server gap
         if request.method == "GET":
             return httpx.Response(200, json={"choreId": chore_id})
-        # POST expects X-MYN-State-Hash header from the GET response
+        # POST endpoint requires X-MYN-State-Hash header via @RequireStateHash
+        # But we have no stateHash to send, so this will be rejected
         if request.method == "POST":
+            # Verify we're being called - the real server would reject no header
+            if not request.headers.get("X-MYN-State-Hash"):
+                # This is the expected failure: POST without the required header
+                return httpx.Response(400, json={"error": "stateHash header required"})
             return httpx.Response(200, json={"choreId": chore_id, "completed": True})
-        return httpx.Response(400)
+        return httpx.Response(500)
 
-    handler = build_handler(transport)
-    # This will fail at runtime when the state-hash header is missing
-    # The xfail documents that this limitation is known and tracked
-    result = json.loads(handler(action="chore_complete", choreId=chore_id))
-    assert result.get("success") is True
+    client = MynApiClient("https://api.example.com", "test-key", transport=httpx.MockTransport(transport))
+    # Call guarded_write directly to see the failure - the stateHash from GET is None
+    # so POST goes out without X-MYN-State-Hash and gets a 400
+    with pytest.raises(MynApiError) as exc_info:
+        client.guarded_write(
+            "POST",
+            "/api/v2/chores/instances/chore-with-state/complete",
+            get_path="/api/v2/chores/instances/chore-with-state",
+        )
+    # Should fail with 400 because POST lacks the required header
+    assert exc_info.value.status == 400

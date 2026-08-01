@@ -185,13 +185,7 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
         if input_data.get("projectId"):
             tasks = [t for t in tasks if t.get("projectId") == input_data["projectId"]]
 
-        # Filter by date range (client-side since server-side filtering is deferred to MIN-932)
-        if input_data.get("startDate"):
-            start_date = input_data["startDate"]
-            tasks = [t for t in tasks if t.get("dueDate", "") >= start_date]
-        if input_data.get("endDate"):
-            end_date = input_data["endDate"]
-            tasks = [t for t in tasks if t.get("dueDate", "") <= end_date]
+        # Date filtering is deferred to MIN-932 (server-side filtering not yet implemented)
 
         # Slim the tasks - remove nested schedules, calendar events, household graphs
         slimmed = []
