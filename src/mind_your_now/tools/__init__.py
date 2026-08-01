@@ -25,7 +25,7 @@ def _redact_secrets(obj: Any) -> Any:
     """Recursively redact values whose keys match secret patterns. MIN-930 backstop."""
     if isinstance(obj, dict):
         return {
-            key: "[REDACTED]" if _SECRET_KEY_PATTERN.match(str(key)) else _redact_secrets(value)
+            key: "[REDACTED]" if _SECRET_KEY_PATTERN.search(str(key)) else _redact_secrets(value)
             for key, value in obj.items()
         }
     elif isinstance(obj, list):
