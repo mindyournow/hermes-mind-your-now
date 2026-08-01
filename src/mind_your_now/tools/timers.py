@@ -92,12 +92,21 @@ def execute_timers(
         if not timer_id:
             return tool_error(f"timerId is required for {action} action")
         if action == "cancel":
-            return tool_result(client.post(f"/api/v2/timers/{timer_id}/cancel"))
+            return tool_result(
+                client.guarded_write(
+                    "POST",
+                    f"/api/v2/timers/{timer_id}/cancel",
+                    json={},
+                    get_path=f"/api/v2/timers/{timer_id}",
+                )
+            )
         snooze_minutes = input_data.get("snoozeMinutes")
         return tool_result(
-            client.post(
+            client.guarded_write(
+                "POST",
                 f"/api/v2/timers/{timer_id}/snooze",
-                {"snoozeMinutes": 5 if snooze_minutes is None else snooze_minutes},
+                json={"snoozeMinutes": 5 if snooze_minutes is None else snooze_minutes},
+                get_path=f"/api/v2/timers/{timer_id}",
             )
         )
 
