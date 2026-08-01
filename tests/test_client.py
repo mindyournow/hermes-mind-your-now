@@ -187,6 +187,20 @@ def test_guarded_write_sends_state_hash_header():
     assert patch_req.headers["X-MYN-State-Hash"] == "hash-abc123"
 
 
+def test_guarded_write_uses_request_scoped_header_without_mutating_client():
+    transport = MockTransport()
+    transport.responses = [
+        make_response(200, {"stateHash": "hash-request"}),
+        make_response(200, {"success": True}),
+    ]
+    client = MynApiClient("https://api.example.com", "key", transport=transport)
+
+    client.guarded_write("PATCH", "/api/v2/resource", json={"data": "value"})
+
+    assert transport.requests[1].headers["X-MYN-State-Hash"] == "hash-request"
+    assert "X-MYN-State-Hash" not in client._client.headers
+
+
 def test_guarded_write_defaults_get_path_to_path():
     """When get_path is omitted, the read uses the same path as the write."""
     transport = MockTransport()

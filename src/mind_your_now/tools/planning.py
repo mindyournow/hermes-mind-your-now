@@ -4,10 +4,8 @@
 state despite their read-shaped API surfaces. They are user-wide, not scoped to a single
 task or date. The model MUST ask the user for permission before calling any planning action.
 
-dryRun returns the affected task set but cannot preview the engine's scheduling decisions.
-Engine decision preview is blocked by MIN-932.
-
-See MIN-932 for scoped planning support and decision preview.
+Planning dry-run and scoped preview support are blocked by MIN-932. A manually injected
+dryRun argument is rejected rather than silently performing the mutation.
 """
 
 from __future__ import annotations
@@ -24,7 +22,6 @@ PLANNING_SCHEMA = action_schema(
     ["plan", "schedule_all", "reschedule"],
     {
         "spreadOverDays": {"type": "number", "default": 1, "description": "Number of days to spread scheduling over (reschedule only)"},
-        "dryRun": {"type": "boolean", "description": "Preview the scheduling changes without applying them (schedule_all, reschedule only)"},
     },
 )
 
@@ -67,7 +64,7 @@ def register_planning_tool(
         description=(
             "AI-powered planning and scheduling. Actions: plan, schedule_all, reschedule. "
             "⚠️ ALL ACTIONS ARE USER-WIDE AND MUTATE SCHEDULING STATE. "
-            "ASK THE USER FOR PERMISSION BEFORE CALLING."
+            "No dry-run or preview is available. ASK THE USER FOR PERMISSION BEFORE CALLING."
         ),
         emoji="🗓️",
     )

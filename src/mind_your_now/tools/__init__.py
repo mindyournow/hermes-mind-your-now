@@ -14,10 +14,10 @@ from mind_your_now.client import MynApiError
 
 logger = logging.getLogger(__name__)
 
-# MIN-930: Recursive redaction pattern for secret-shaped keys
-# Matches: accessToken, refreshToken, idToken, accessToken, secret, client_secret, apiKey, password, credential, etc.
+# MIN-930: Recursive redaction pattern for secret-shaped keys.
+# Includes common HTTP/session credential names plus MYN-specific agent keys.
 _SECRET_KEY_PATTERN = re.compile(
-    r"(?i)(access|refresh|id)_?token|secret|client_?secret|api_?key|password|credential|myninboundkey|agentkey"
+    r"(?i)(?:^token$|^authorization$|^cookie$|(?:access|refresh|id|session)_?token|secret|api_?key|password|credential|myn_?inbound_?key|agent_?key)"
 )
 
 

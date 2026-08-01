@@ -153,34 +153,23 @@ class MynApiClient:
         params: dict[str, Any] | None = None,
         state_hash: str | None = None,
     ) -> Any:
-        """Issue a write request with the X-MYN-State-Hash header."""
-        # We need to inject a custom header, so we reconstruct the request
-        # and use the underlying httpx client's request method with headers
-        headers = {}
-        if state_hash:
-            headers["X-MYN-State-Hash"] = state_hash
-
-        # Use a context manager to add temporary headers
-        original_headers = self._client.headers.copy()
-        self._client.headers.update(headers)
+        """Issue a write request with a request-scoped X-MYN-State-Hash header."""
+        headers = {"X-MYN-State-Hash": state_hash} if state_hash else None
+        response = self._client.request(
+            method,
+            path,
+            params=params,
+            json=json,
+            headers=headers,
+        )
+        if not response.is_success:
+            raise MynApiError(response.status_code, response.text[:500])
+        if response.status_code == 204 or not response.content:
+            return None
         try:
-            response = self._client.request(
-                method,
-                path,
-                params=params,
-                json=json,
-            )
-            if not response.is_success:
-                raise MynApiError(response.status_code, response.text[:500])
-            if response.status_code == 204 or not response.content:
-                return None
-            try:
-                return response.json()
-            except ValueError:
-                return None
-        finally:
-            # Restore original headers
-            self._client.headers = original_headers
+            return response.json()
+        except ValueError:
+            return None
 
     @staticmethod
     def _hash_from_conflict(error_body: str) -> str | None:

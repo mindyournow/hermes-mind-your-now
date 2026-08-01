@@ -94,8 +94,8 @@ def execute_lists(client: MynApiClient, **input_data: Any) -> str:
     if action == "toggle":
         item_id = input_data["itemId"]
         requested_checked = input_data.get("checked")
-        # Read collection to find current state
-        items_data = client.get(base_path)
+        # Include checked records so desired-state comparison is correct in every state.
+        items_data = client.get(base_path, params={"includeChecked": "true"})
         current = None
 
         # Try different response shapes
@@ -150,8 +150,8 @@ def execute_lists(client: MynApiClient, **input_data: Any) -> str:
 
     if action == "delete_checked":
         if input_data.get("dryRun"):
-            # Dry run: fetch and return checked items without deleting
-            items_data = client.get(base_path)
+            # Dry run: checked records are hidden by default, so request them explicitly.
+            items_data = client.get(base_path, params={"includeChecked": "true"})
             if isinstance(items_data, dict) and isinstance(items_data.get("items"), list):
                 checked = [item for item in items_data["items"] if item.get("checked")]
                 return tool_result({
@@ -169,8 +169,9 @@ def execute_lists(client: MynApiClient, **input_data: Any) -> str:
         if input_data.get("priority"):
             body["priority"] = input_data["priority"]
         if input_data.get("dryRun"):
-            # Dry run: fetch items, filter using the same default, but don't convert
-            items_data = client.get(base_path)
+            # Request checked records when previewing the full list.
+            params = {"includeChecked": "true"} if not unchecked_only else None
+            items_data = client.get(base_path, params=params)
             if isinstance(items_data, dict) and isinstance(items_data.get("items"), list):
                 items = items_data["items"]
                 filtered = [item for item in items if not unchecked_only or not item.get("checked")]

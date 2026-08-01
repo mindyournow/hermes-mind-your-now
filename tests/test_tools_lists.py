@@ -147,3 +147,74 @@ def test_bulk_add_and_convert_preserve_typescript_bodies():
         },
         {"uncheckedOnly": False, "priority": "CRITICAL"},
     ]
+
+
+@pytest.mark.parametrize(
+    ("current_checked", "requested_checked", "patch_expected"),
+    [
+        (False, False, False),
+        (False, True, True),
+        (True, False, True),
+        (True, True, False),
+    ],
+)
+def test_toggle_honors_all_desired_state_combinations(
+    current_checked, requested_checked, patch_expected
+):
+    requests = []
+
+    def transport(request):
+        requests.append((request.method, dict(request.url.params)))
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={"items": [{"id": ITEM_ID, "checked": current_checked}]},
+            )
+        return httpx.Response(200, json={"id": ITEM_ID, "checked": requested_checked})
+
+    result = json.loads(
+        build_handler(transport)(
+            action="toggle",
+            householdId=HOUSEHOLD_ID,
+            itemId=ITEM_ID,
+            checked=requested_checked,
+        )
+    )
+
+    assert requests[0] == ("GET", {"includeChecked": "true"})
+    assert [method for method, _params in requests] == (
+        ["GET", "PATCH"] if patch_expected else ["GET"]
+    )
+    assert result["success"] is True
+
+
+def test_delete_checked_dry_run_requests_and_returns_checked_items():
+    observed_params = None
+
+    def transport(request):
+        nonlocal observed_params
+        observed_params = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {"id": "checked", "checked": True},
+                    {"id": "unchecked", "checked": False},
+                ]
+            },
+        )
+
+    result = json.loads(
+        build_handler(transport)(
+            action="delete_checked",
+            householdId=HOUSEHOLD_ID,
+            dryRun=True,
+        )
+    )
+
+    assert observed_params == {"includeChecked": "true"}
+    assert result["data"] == {
+        "dryRun": True,
+        "items": [{"id": "checked", "checked": True}],
+        "count": 1,
+    }

@@ -136,47 +136,113 @@ def test_calendar_event_lifecycle_with_cleanup():
                 pass  # Best-effort cleanup
 
 
-def test_cleanup_smoke_records():
-    """Test the cleanup helper against mocked responses."""
-    from cleanup_smoke_records import cleanup_stranded_records
-    import os
+def test_cleanup_smoke_records(monkeypatch):
+    """Cleanup verifies markers, deletes both records, and confirms absence."""
+    from cleanup_smoke_records import EVENT_ID, TASK_ID, cleanup_stranded_records
 
     requests = []
-    deleted_ids = set()
+    task_deleted = False
+    event_deleted = False
 
     def transport(request):
-        requests.append((request.method, request.url.path))
+        nonlocal task_deleted, event_deleted
+        requests.append((request.method, request.url.path, dict(request.url.params)))
         method, path = request.method, request.url.path
 
-        # Task deletion
-        if method == "DELETE" and "/api/v2/unified-tasks/" in path:
-            task_id = path.split("/")[-1]
-            deleted_ids.add(task_id)
+        if path == f"/api/v2/unified-tasks/{TASK_ID}":
+            if method == "DELETE":
+                task_deleted = True
+                return httpx.Response(204)
+            if task_deleted:
+                return httpx.Response(404)
+            return httpx.Response(
+                200,
+                json={
+                    "id": TASK_ID,
+                    "title": f"[SMOKE TEST] {SMOKE_MARKER}task",
+                    "stateHash": "task-hash",
+                },
+            )
+
+        if path == "/api/v2/calendar/events":
+            events = [] if event_deleted else [
+                {"id": EVENT_ID, "title": f"[SMOKE TEST] {SMOKE_MARKER}event"}
+            ]
+            return httpx.Response(200, json={"events": events})
+
+        if path == f"/api/v2/calendar/standalone-events/{EVENT_ID}":
+            event_deleted = True
             return httpx.Response(204)
 
-        # Calendar deletion
-        if method == "DELETE" and "/api/v2/calendar/standalone-events/" in path:
-            event_id = path.split("/")[-1]
-            deleted_ids.add(event_id)
-            return httpx.Response(204)
+        return httpx.Response(500)
 
-        # Task GET (verify not found)
-        if method == "GET" and task_id in deleted_ids:
-            return httpx.Response(404)
+    client = MynApiClient("https://api.example.com", "test-key", transport=httpx.MockTransport(transport))
+    monkeypatch.setenv("HERMES_ALLOW_CLEANUP", "1")
 
-        # Calendar GET (verify not found)
-        if method == "GET" and event_id in deleted_ids:
-            return httpx.Response(404)
+    result = cleanup_stranded_records(client)
 
-        return httpx.Response(200, json={})
+    assert result == {"task": "deleted", "calendarEvent": "deleted"}
+    assert any(method == "DELETE" and path.endswith(TASK_ID) for method, path, _ in requests)
+    assert any(method == "DELETE" and path.endswith(EVENT_ID) for method, path, _ in requests)
+
+
+def test_cleanup_requires_exact_authorization_value(monkeypatch):
+    from cleanup_smoke_records import cleanup_stranded_records
+
+    monkeypatch.setenv("HERMES_ALLOW_CLEANUP", "0")
+    client = MynApiClient(
+        "https://api.example.com",
+        "test-key",
+        transport=httpx.MockTransport(lambda _request: pytest.fail("no request expected")),
+    )
+
+    with pytest.raises(RuntimeError, match="HERMES_ALLOW_CLEANUP=1"):
+        cleanup_stranded_records(client)
+
+
+def test_cleanup_refuses_record_without_smoke_marker(monkeypatch):
+    from cleanup_smoke_records import TASK_ID, cleanup_stranded_records
+
+    monkeypatch.setenv("HERMES_ALLOW_CLEANUP", "1")
+
+    def transport(request):
+        if request.method == "GET" and request.url.path.endswith(TASK_ID):
+            return httpx.Response(200, json={"id": TASK_ID, "title": "Real user task"})
+        return httpx.Response(500)
 
     client = MynApiClient("https://api.example.com", "test-key", transport=httpx.MockTransport(transport))
 
-    # Enable cleanup
-    os.environ["HERMES_ALLOW_CLEANUP"] = "1"
-    try:
+    with pytest.raises(RuntimeError, match="marker not found"):
         cleanup_stranded_records(client)
-        # Verify that the DELETE requests were issued
-        assert len([req for req in requests if req[0] == "DELETE"]) >= 1
-    finally:
-        del os.environ["HERMES_ALLOW_CLEANUP"]
+
+
+def test_cleanup_surfaces_non_404_verification_failure(monkeypatch):
+    from cleanup_smoke_records import TASK_ID, cleanup_stranded_records
+
+    monkeypatch.setenv("HERMES_ALLOW_CLEANUP", "1")
+    task_deleted = False
+
+    def transport(request):
+        nonlocal task_deleted
+        if request.url.path.endswith(TASK_ID):
+            if request.method == "DELETE":
+                task_deleted = True
+                return httpx.Response(204)
+            if task_deleted:
+                return httpx.Response(500, text="verification failed")
+            return httpx.Response(
+                200,
+                json={
+                    "id": TASK_ID,
+                    "title": f"{SMOKE_MARKER}task",
+                    "stateHash": "task-hash",
+                },
+            )
+        return httpx.Response(500)
+
+    client = MynApiClient("https://api.example.com", "test-key", transport=httpx.MockTransport(transport))
+
+    with pytest.raises(MynApiError) as exc_info:
+        cleanup_stranded_records(client)
+
+    assert exc_info.value.status == 500

@@ -263,3 +263,55 @@ def test_archive_uses_guarded_write_with_state_hash():
     assert f"/unified-tasks/{TASK_ID}" in get_req[1]
     assert post_req[0] == "POST"
     assert f"/unified-tasks/{TASK_ID}/archive" in post_req[1]
+
+
+@pytest.mark.parametrize(
+    ("filters", "expected_ids"),
+    [
+        ({"startDate": "2026-08-03"}, ["spans", "future"]),
+        ({"endDate": "2026-08-02"}, ["spans", "end-only"]),
+        (
+            {"startDate": "2026-08-02", "endDate": "2026-08-04"},
+            ["spans", "end-only"],
+        ),
+    ],
+)
+def test_list_date_filters_use_inclusive_task_interval_overlap(filters, expected_ids):
+    observed_params = None
+    tasks = [
+        {"id": "spans", "startDate": "2026-08-01T10:00:00Z", "endDate": "2026-08-03T11:00:00Z"},
+        {"id": "future", "startDate": "2026-08-05", "endDate": None},
+        {"id": "end-only", "startDate": None, "endDate": "2026-08-02"},
+        {"id": "undated", "startDate": None, "endDate": None},
+    ]
+
+    def transport(request):
+        nonlocal observed_params
+        observed_params = dict(request.url.params)
+        return httpx.Response(200, json={"tasks": tasks})
+
+    result = json.loads(build_handler(transport)(action="list", **filters))
+
+    assert observed_params == filters
+    assert [task["id"] for task in result["data"]["tasks"]] == expected_ids
+
+
+def test_list_date_filter_excludes_undated_tasks_but_keeps_single_date_tasks():
+    tasks = [
+        {"id": "start-only", "startDate": "2026-08-03", "endDate": None},
+        {"id": "end-only", "startDate": None, "endDate": "2026-08-03"},
+        {"id": "undated", "startDate": None, "endDate": None},
+    ]
+
+    result = json.loads(
+        build_handler(lambda _request: httpx.Response(200, json={"tasks": tasks}))(
+            action="list",
+            startDate="2026-08-03",
+            endDate="2026-08-03",
+        )
+    )
+
+    assert [task["id"] for task in result["data"]["tasks"]] == [
+        "start-only",
+        "end-only",
+    ]

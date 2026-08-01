@@ -89,7 +89,7 @@ All tools use the Hermes toolset `mind-your-now`.
 | `myn_profile` | `get_info`, `get_goals`, `update_goals`, `preferences` |
 | `myn_household` | `members`, `invite`, `chores`, `chore_schedule`, `chore_complete` |
 | `myn_projects` | `list`, `get`, `create`, `move_task` |
-| `myn_planning` | `plan`, `schedule_all`, `reschedule` (all actions are user-wide and mutate scheduling state; supports `dryRun` for `schedule_all` and `reschedule`) |
+| `myn_planning` | `plan`, `schedule_all`, `reschedule` (all actions are user-wide and mutate scheduling state; no dry-run or preview is available) |
 | `myn_a2a_pairing` | `pair`, `status`, `unpair`, `redeem_invite`, `ping`, `send_message`, `get_agent_card` |
 | `myn_ynab` | Budget, transaction, scheduled-transaction, analytics, connection, split, and category-management actions matching `@mind-your-now/myn` |
 
@@ -97,7 +97,7 @@ Timers created through `myn_timers` include `sourceAgentName` and `sourceChannel
 
 ## Client-side truncation and result transparency
 
-Tools that return lists (`list_tasks`, `list_events`, `list_habits`, `list_projects`, `recall`, etc.) apply client-side limits and mark truncated results with `_truncated: true` and `_totalCount` so the model knows it's looking at a slice. Planning `dryRun` actions return the affected task set without applying changes. These markers ensure transparent communication about partial results.
+Tools that return lists (`list_tasks`, `list_events`, `list_habits`, `list_projects`, `recall`, etc.) apply client-side limits and mark truncated results with `_truncated: true` and `_totalCount` so the model knows it's looking at a slice. List bulk actions support `dryRun`, but planning actions do not expose a preview until MIN-932 supplies a reliable affected-task contract. These markers and explicit capability boundaries prevent the model from mistaking partial or unsupported previews for complete results.
 
 ## Kaia memory injection
 

@@ -244,6 +244,7 @@ def test_wi7a_ac1_planning_schema_contains_only_action_and_spreadoverdays():
     assert "constraints" not in props
     assert "tasks" not in props
     assert "date" not in props
+    assert "dryRun" not in props
 
 
 def test_wi7a_ac2_description_warns_about_user_wide_scope():
@@ -387,7 +388,14 @@ def test_wi9b_ac1_tool_result_redacts_secrets():
             {"email": "user@example.com", "refreshToken": "ya29.secret"},
         ],
         "apiKey": "sk-123456789",
-        "settings": {"password": "my_password", "username": "john"},
+        "token": "bearer-value",
+        "authorization": "Bearer secret",
+        "cookie": "session=secret",
+        "settings": {
+            "password": "my_password",
+            "sessionToken": "session-secret",
+            "username": "john",
+        },
     }
 
     # Convert through tool_result (which redacts before passing to hermes)
@@ -402,7 +410,11 @@ def test_wi9b_ac1_tool_result_redacts_secrets():
 
     # Verify redaction
     assert data["apiKey"] == "[REDACTED]"
+    assert data["token"] == "[REDACTED]"
+    assert data["authorization"] == "[REDACTED]"
+    assert data["cookie"] == "[REDACTED]"
     assert data["settings"]["password"] == "[REDACTED]"
+    assert data["settings"]["sessionToken"] == "[REDACTED]"
     # Email should NOT be redacted (not a secret key)
     assert data["accounts"][0]["email"] == "user@example.com"
     # refreshToken should be redacted

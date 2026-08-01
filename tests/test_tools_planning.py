@@ -74,3 +74,19 @@ def test_reschedule_passes_rebalance_via_params():
     handler(action="reschedule", spreadOverDays=3)
 
     assert observed == [{"rebalance": "false"}, {"rebalance": "true"}]
+
+
+def test_schema_does_not_advertise_unsupported_dry_run():
+    from mind_your_now.tools.planning import PLANNING_SCHEMA
+
+    assert "dryRun" not in PLANNING_SCHEMA["properties"]
+
+
+@pytest.mark.parametrize("action", ["schedule_all", "reschedule"])
+def test_manually_injected_dry_run_is_rejected_without_mutation(action):
+    handler = build_handler(lambda _request: pytest.fail("dryRun must not call the API"))
+
+    result = json.loads(handler(action=action, dryRun=True))
+
+    assert result["success"] is False
+    assert "not supported" in result["error"]

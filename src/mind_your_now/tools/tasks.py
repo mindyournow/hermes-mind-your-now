@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
+from datetime import date
 from typing import Any
 
 from mind_your_now.client import MynApiClient
@@ -55,8 +56,16 @@ TASKS_SCHEMA = action_schema(
         "status": {"type": "string", "enum": TASK_STATUSES},
         "priority": {"type": "string", "enum": PRIORITIES},
         "projectId": {"type": "string"},
-        "startDate": {"type": "string", "format": "date"},
-        "endDate": {"type": "string", "format": "date"},
+        "startDate": {
+            "type": "string",
+            "format": "date",
+            "description": "For list, include tasks whose start/end interval overlaps this date or later. For create, the task start date.",
+        },
+        "endDate": {
+            "type": "string",
+            "format": "date",
+            "description": "For list, include tasks whose start/end interval overlaps this date or earlier.",
+        },
         "limit": {"type": "number", "default": 20},
         "offset": {"type": "number", "default": 0},
         "taskId": {"type": "string", "format": "uuid"},
@@ -153,17 +162,59 @@ def _resolve_schedule_names(client: MynApiClient, names: list[str]) -> list[str]
         return []
 
 
+def _parse_date(value: Any) -> date | None:
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _overlaps_date_range(
+    task: dict[str, Any],
+    range_start: date | None,
+    range_end: date | None,
+) -> bool:
+    """Return whether a task's inclusive start/end interval overlaps the filter."""
+    task_start = _parse_date(task.get("startDate"))
+    task_end = _parse_date(task.get("endDate"))
+    if task_start is None and task_end is None:
+        return False
+
+    interval_start = task_start or task_end
+    interval_end = task_end or task_start
+    assert interval_start is not None and interval_end is not None
+
+    if range_start is not None and interval_end < range_start:
+        return False
+    if range_end is not None and interval_start > range_end:
+        return False
+    return True
+
+
 def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
     action = input_data.get("action")
 
     if action == "list":
-        # Fetch without limit/offset (let API return full list), then filter and trim client-side
+        range_start = _parse_date(input_data.get("startDate"))
+        range_end = _parse_date(input_data.get("endDate"))
+        if input_data.get("startDate") is not None and range_start is None:
+            return tool_error("startDate must be an ISO 8601 date")
+        if input_data.get("endDate") is not None and range_end is None:
+            return tool_error("endDate must be an ISO 8601 date")
+        if range_start is not None and range_end is not None and range_start > range_end:
+            return tool_error("startDate must be on or before endDate")
+
+        # Fetch without limit/offset, then enforce every advertised filter client-side.
         params = {
             key: input_data[key]
             for key in (
                 "status",
                 "priority",
                 "projectId",
+                "startDate",
+                "endDate",
             )
             if input_data.get(key) is not None
         }
@@ -177,15 +228,18 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
         else:
             return tool_result(data)
 
-        # Filter by status/priority/projectId (already done by API, but ensure client-side enforcement)
-        if input_data.get("status"):
-            tasks = [t for t in tasks if t.get("status") == input_data["status"]]
-        if input_data.get("priority"):
-            tasks = [t for t in tasks if t.get("priority") == input_data["priority"]]
-        if input_data.get("projectId"):
-            tasks = [t for t in tasks if t.get("projectId") == input_data["projectId"]]
-
-        # Date filtering is deferred to MIN-932 (server-side filtering not yet implemented)
+        # The API currently ignores some filters, so enforce them in one client-side pass.
+        tasks = [
+            task
+            for task in tasks
+            if (not input_data.get("status") or task.get("status") == input_data["status"])
+            and (not input_data.get("priority") or task.get("priority") == input_data["priority"])
+            and (not input_data.get("projectId") or task.get("projectId") == input_data["projectId"])
+            and (
+                range_start is None and range_end is None
+                or _overlaps_date_range(task, range_start, range_end)
+            )
+        ]
 
         # Slim the tasks - remove nested schedules, calendar events, household graphs
         slimmed = []

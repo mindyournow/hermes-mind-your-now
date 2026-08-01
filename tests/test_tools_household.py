@@ -209,13 +209,10 @@ def test_chore_complete_state_hash_unsupported():
         return httpx.Response(500)
 
     client = MynApiClient("https://api.example.com", "test-key", transport=httpx.MockTransport(transport))
-    # Call guarded_write directly to see the failure - the stateHash from GET is None
-    # so POST goes out without X-MYN-State-Hash and gets a 400
-    with pytest.raises(MynApiError) as exc_info:
-        client.guarded_write(
-            "POST",
-            "/api/v2/chores/instances/chore-with-state/complete",
-            get_path="/api/v2/chores/instances/chore-with-state",
-        )
-    # Should fail with 400 because POST lacks the required header
-    assert exc_info.value.status == 400
+    # Let the known 400 escape so pytest records an actual XFAIL. If the server starts
+    # returning stateHash, the write succeeds and strict=True turns the XPASS into a failure.
+    client.guarded_write(
+        "POST",
+        "/api/v2/chores/instances/chore-with-state/complete",
+        get_path="/api/v2/chores/instances/chore-with-state",
+    )

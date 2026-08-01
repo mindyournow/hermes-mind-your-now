@@ -36,20 +36,20 @@ Every parameter in a tool's schema must be honored in the handler. No silent dro
 
 **Status:** ✓ Implemented with docstring note
 
-## Rule 4: DryRun on Bulk Actions
+## Rule 4: Honest Dry-Run Capabilities
 
-Bulk actions (`delete_checked`, `convert_to_tasks` in lists; `schedule_all`, `reschedule` in planning) support `dryRun: true` to preview changes without applying them. The response includes the affected task/item set and a count.
+The list bulk actions `delete_checked` and `convert_to_tasks` support `dryRun: true`; the response includes the affected item set and a count without mutating the list. Planning actions do not advertise `dryRun`, because the API cannot yet provide a reliable affected-task preview. A manually injected planning `dryRun` argument is rejected without sending a scheduling request.
 
 Caveats:
-- Planning `dryRun` cannot preview the engine's scheduling decisions (blocked by MIN-932); only the task set affected is shown.
-- dryRun is not item-scoped (no `itemIds` filter) — it applies to the full user set. Item scoping is tracked as MIN-932.
+- List dry-run is not item-scoped (no `itemIds` filter) — it applies to the full household list. Item scoping is tracked as MIN-932.
+- Planning preview, including the affected task set and engine decisions, is tracked as MIN-932.
 
 **Files:**
 - `src/mind_your_now/tools/lists.py` (delete_checked, convert_to_tasks)
-- `src/mind_your_now/tools/planning.py` (schedule_all, reschedule)
-- Test coverage: `tests/test_ac_verification.py`
+- `src/mind_your_now/tools/planning.py` (explicit dry-run rejection)
+- Test coverage: `tests/test_ac_verification.py`, `tests/test_tools_planning.py`
 
-**Status:** ✓ Implemented with caveats documented
+**Status:** ✓ Implemented without advertising unsupported planning previews
 
 ## Rule 5: Redacted Tool Output
 
@@ -75,7 +75,7 @@ The following improvements are blocked by MIN-932 (scoped planning and search):
 - Filtered-search capability in memory (`min-932` item 2)
 - Scoped planning with per-task/per-date control
 - Item-scoped dryRun for bulk list operations
-- Planning engine decision preview for dryRun
+- Planning affected-task and engine-decision preview for dryRun
 
 The habits `reminders` action was removed; restoration is blocked on MIN-932 and cross-references MIN-883.
 
