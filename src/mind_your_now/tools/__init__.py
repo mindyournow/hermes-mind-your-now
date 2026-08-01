@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import functools
+import json
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -11,6 +13,25 @@ from mind_your_now.client import MynApiError
 
 
 logger = logging.getLogger(__name__)
+
+# MIN-930: Recursive redaction pattern for secret-shaped keys
+# Matches: accessToken, refreshToken, idToken, accessToken, secret, client_secret, apiKey, password, credential, etc.
+_SECRET_KEY_PATTERN = re.compile(
+    r"(?i)(access|refresh|id)_?token|secret|client_?secret|api_?key|password|credential|myninboundkey|agentkey"
+)
+
+
+def _redact_secrets(obj: Any) -> Any:
+    """Recursively redact values whose keys match secret patterns. MIN-930 backstop."""
+    if isinstance(obj, dict):
+        return {
+            key: "[REDACTED]" if _SECRET_KEY_PATTERN.search(str(key)) else _redact_secrets(value)
+            for key, value in obj.items()
+        }
+    elif isinstance(obj, list):
+        return [_redact_secrets(item) for item in obj]
+    else:
+        return obj
 
 
 def truncate(payload: dict[str, Any], key: str, limit: int, *, offset: int = 0) -> dict[str, Any]:
@@ -50,31 +71,11 @@ def truncate(payload: dict[str, Any], key: str, limit: int, *, offset: int = 0) 
     return payload
 
 
-def _redact_secrets(obj: Any) -> Any:
-    """Recursively redact secret-shaped keys in payload."""
-    secret_keys = {
-        "token", "apikey", "api_key", "secret", "password", "refreshtoken",
-        "refresh_token", "refreshtoken", "authorization", "cookie", "sessiontoken",
-        "session_token", "credential", "credentials", "auth", "accesstoken",
-        "access_token", "clientsecret", "client_secret",
-        "myninboundkey", "inboundkey", "agentkey", "agent_key",
-    }
-
-    if isinstance(obj, dict):
-        return {
-            k: "[REDACTED]" if k.lower() in secret_keys else _redact_secrets(v)
-            for k, v in obj.items()
-        }
-    elif isinstance(obj, list):
-        return [_redact_secrets(item) for item in obj]
-    else:
-        return obj
-
-
 def tool_result(payload: Any) -> str:
     from tools.registry import tool_result as hermes_tool_result
 
-    # Redact secrets before passing to hermes
+    # MIN-930: Redact secret-shaped keys from the payload before returning to Hermes.
+    # This is a backstop against API regressions; server-side gates are the primary defense.
     redacted = _redact_secrets(payload)
     return hermes_tool_result(redacted)
 
