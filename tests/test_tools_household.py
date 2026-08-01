@@ -92,7 +92,15 @@ def test_actions_use_expected_methods_and_paths(input_data, method, path):
 
     result = json.loads(build_handler(transport)(**input_data))
 
-    assert observed == [(method, path)]
+    # For chore_complete, guarded_write adds a GET before the write
+    if method == "POST" and "chore_complete" in input_data.get("action", ""):
+        # Guarded write: GET then POST
+        assert len(observed) == 2
+        assert observed[0][0] == "GET"
+        assert "/chores/instances/" in observed[0][1]
+        assert observed[1] == (method, path)
+    else:
+        assert observed == [(method, path)]
     assert result == {"success": True, "data": payload}
 
 
@@ -151,3 +159,26 @@ def test_chore_schedule_uses_single_date_or_seven_day_range():
             "endDate": "2026-08-01",
         },
     ]
+
+
+def test_chore_complete_uses_guarded_write_with_state_hash():
+    """chore_complete routes through guarded_write, which sends GET then POST with state hash."""
+    requests_log = []
+    chore_id = "chore-123"
+
+    def transport(request):
+        requests_log.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"choreId": chore_id, "stateHash": "hash-v1"})
+        return httpx.Response(200, json={"choreId": chore_id, "completed": True})
+
+    handler = build_handler(transport)
+    json.loads(handler(action="chore_complete", choreId=chore_id))
+
+    # Should have GET then POST
+    assert len(requests_log) >= 2
+    get_req, post_req = requests_log[0], requests_log[1]
+    assert get_req[0] == "GET"
+    assert f"/chores/instances/{chore_id}" in get_req[1]
+    assert post_req[0] == "POST"
+    assert f"/chores/instances/{chore_id}/complete" in post_req[1]
