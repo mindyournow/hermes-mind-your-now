@@ -354,7 +354,11 @@ def execute_calendar(client: MynApiClient, **input_data: Any) -> str:
         return tool_result({"updated": True, "eventId": event_id, **(data or {})})
 
     if action == "delete_event":
-        client.delete(f"/api/v2/calendar/events/{event_id}")
+        calendar_id = input_data.get("calendarId")
+        client.delete(
+            f"/api/v2/calendar/standalone-events/{event_id}",
+            params={"calendarId": calendar_id or "primary"},
+        )
         return tool_result({"deleted": True, "eventId": event_id})
 
     if action == "meetings":
