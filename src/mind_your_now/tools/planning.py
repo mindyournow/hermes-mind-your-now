@@ -4,7 +4,10 @@
 state despite their read-shaped API surfaces. They are user-wide, not scoped to a single
 task or date. The model MUST ask the user for permission before calling any planning action.
 
-See MIN-932 for scoped planning support.
+dryRun returns the affected task set but cannot preview the engine's scheduling decisions.
+Engine decision preview is blocked by MIN-932.
+
+See MIN-932 for scoped planning support and decision preview.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ PLANNING_SCHEMA = action_schema(
     ["plan", "schedule_all", "reschedule"],
     {
         "spreadOverDays": {"type": "number", "default": 1, "description": "Number of days to spread scheduling over (reschedule only)"},
+        "dryRun": {"type": "boolean", "description": "Preview the scheduling changes without applying them (schedule_all, reschedule only)"},
     },
 )
 
@@ -30,9 +34,31 @@ def execute_planning(client: MynApiClient, **input_data: Any) -> str:
     if action == "plan":
         return tool_result({"result": client.get("/planning/plan")})
     if action == "schedule_all":
+        if input_data.get("dryRun"):
+            # Dry run: fetch what would be scheduled but don't apply
+            result = client.post("/planning/scheduleAll", {})
+            return tool_result({
+                "dryRun": True,
+                "tasks": result.get("tasks", []) if isinstance(result, dict) else [],
+                "count": len(result.get("tasks", [])) if isinstance(result, dict) else 0,
+                "message": "Engine decisions cannot be previewed — only the affected task set is shown. See MIN-932 for scope."
+            })
         return tool_result({"result": client.post("/planning/scheduleAll", {})})
     if action == "reschedule":
         rebalance = "true" if (input_data.get("spreadOverDays") or 0) > 1 else "false"
+        if input_data.get("dryRun"):
+            # Dry run: fetch what would be rescheduled but don't apply
+            result = client.post(
+                "/planning/kickTheCan",
+                {},
+                params={"rebalance": rebalance},
+            )
+            return tool_result({
+                "dryRun": True,
+                "tasks": result.get("tasks", []) if isinstance(result, dict) else [],
+                "count": len(result.get("tasks", [])) if isinstance(result, dict) else 0,
+                "message": "Engine decisions cannot be previewed — only the affected task set is shown. See MIN-932 for scope."
+            })
         return tool_result(
             client.post(
                 "/planning/kickTheCan",
