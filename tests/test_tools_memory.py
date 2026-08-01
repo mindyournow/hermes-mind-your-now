@@ -12,6 +12,25 @@ from mind_your_now.tools.memory import register_memory_tool
 MEMORY_ID = "11111111-1111-4111-8111-111111111111"
 
 
+def memory_dto(memory_id, content):
+    return {
+        "id": memory_id,
+        "type": "PREFERENCE",
+        "content": content,
+        "confidence": 0.9,
+        "sourceConversationId": "conversation-1",
+        "sourceGoalId": None,
+        "createdAt": "2026-03-01T10:00:00Z",
+        "lastReinforcedAt": None,
+        "reinforcementCount": 1,
+        "lastUsedAt": None,
+        "usageCount": 0,
+        "topics": ["preference"],
+        "hasEmbedding": True,
+        "confidenceLevel": "high",
+    }
+
+
 @pytest.fixture(autouse=True)
 def fake_hermes_registry(monkeypatch):
     tools_module = types.ModuleType("tools")
@@ -121,7 +140,7 @@ def test_memory_search_uses_context_endpoint_with_encoded_params():
 
 def test_recall_sends_limit_and_unwraps_memories_envelope():
     observed_params = None
-    memories = [{"memoryId": MEMORY_ID, "content": "Remembered"}]
+    memories = [memory_dto(MEMORY_ID, "Remembered")]
 
     def transport(request):
         nonlocal observed_params
@@ -153,8 +172,8 @@ def test_recall_filters_by_memory_id_after_bounded_fetch():
             200,
             json={
                 "memories": [
-                    {"memoryId": MEMORY_ID, "content": "Match"},
-                    {"memoryId": "other", "content": "Other"},
+                    memory_dto(MEMORY_ID, "Match"),
+                    memory_dto("other", "Other"),
                 ],
                 "totalCount": 2,
                 "limit": 50,
@@ -168,4 +187,4 @@ def test_recall_filters_by_memory_id_after_bounded_fetch():
     )
 
     assert observed_params == {"limit": "50"}
-    assert result["data"] == {"memoryId": MEMORY_ID, "content": "Match"}
+    assert result["data"] == memory_dto(MEMORY_ID, "Match")

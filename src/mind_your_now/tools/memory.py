@@ -61,7 +61,7 @@ def execute_memory(client: MynApiClient, **input_data: Any) -> str:
                 (
                     memory
                     for memory in memories
-                    if memory.get("memoryId") == memory_id
+                    if memory.get("id") == memory_id
                 ),
                 None,
             )
