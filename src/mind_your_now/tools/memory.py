@@ -55,12 +55,18 @@ def execute_memory(client: MynApiClient, **input_data: Any) -> str:
         )
         memory_id = input_data.get("memoryId")
         if memory_id:
-            memories = data if isinstance(data, list) else []
+            # Handle both wrapped response {"memories": [...], "totalCount": N} and bare list
+            if isinstance(data, dict) and "memories" in data:
+                memories = data["memories"]
+            elif isinstance(data, list):
+                memories = data
+            else:
+                memories = []
             match = next(
                 (
                     memory
                     for memory in memories
-                    if memory.get("memoryId") == memory_id
+                    if (memory.get("id") or memory.get("memoryId")) == memory_id
                 ),
                 None,
             )

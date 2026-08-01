@@ -133,3 +133,57 @@ def test_recall_filters_by_memory_id_after_bounded_fetch():
 
     assert observed_params == {"limit": "50"}
     assert result["data"] == {"memoryId": MEMORY_ID, "content": "Match"}
+
+
+def test_recall_by_id_handles_wrapped_response():
+    """recall with memoryId returns the memory from wrapped {\"memories\": [...], \"totalCount\": N} response."""
+    memory_id = "mem-123"
+
+    def transport(request):
+        return httpx.Response(
+            200,
+            json={
+                "memories": [
+                    {"id": memory_id, "content": "Match"},
+                    {"id": "other", "content": "Other"},
+                ],
+                "totalCount": 2,
+            },
+        )
+
+    result = json.loads(build_handler(transport)(action="recall", memoryId=memory_id))
+    assert result["data"] == {"id": memory_id, "content": "Match"}
+
+
+def test_recall_by_id_matches_on_id_field():
+    """recall with memoryId matches on the 'id' field (not 'memoryId')."""
+    memory_id = "mem-456"
+
+    def transport(request):
+        return httpx.Response(
+            200,
+            json=[
+                {"id": memory_id, "content": "Found"},
+                {"id": "other", "content": "Not this"},
+            ],
+        )
+
+    result = json.loads(build_handler(transport)(action="recall", memoryId=memory_id))
+    assert result["data"] == {"id": memory_id, "content": "Found"}
+
+
+def test_recall_by_id_handles_bare_list():
+    """recall accepts bare list responses for compatibility."""
+    memory_id = "mem-789"
+
+    def transport(request):
+        return httpx.Response(
+            200,
+            json=[
+                {"id": memory_id, "content": "Match"},
+                {"id": "other", "content": "Other"},
+            ],
+        )
+
+    result = json.loads(build_handler(transport)(action="recall", memoryId=memory_id))
+    assert result["data"] == {"id": memory_id, "content": "Match"}
