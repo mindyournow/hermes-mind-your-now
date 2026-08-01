@@ -157,6 +157,7 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
     action = input_data.get("action")
 
     if action == "list":
+        # Fetch without limit/offset (let API return full list), then filter and trim client-side
         params = {
             key: input_data[key]
             for key in (
@@ -165,12 +166,44 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
                 "projectId",
                 "startDate",
                 "endDate",
-                "limit",
-                "offset",
             )
             if input_data.get(key) is not None
         }
-        return tool_result(client.get("/api/v2/unified-tasks", params=params))
+        data = client.get("/api/v2/unified-tasks", params=params)
+
+        # Apply client-side filters
+        if isinstance(data, dict) and isinstance(data.get("tasks"), list):
+            tasks = data["tasks"]
+
+            # Filter by status/priority/projectId (already done by API, but ensure client-side enforcement)
+            if input_data.get("status"):
+                tasks = [t for t in tasks if t.get("status") == input_data["status"]]
+            if input_data.get("priority"):
+                tasks = [t for t in tasks if t.get("priority") == input_data["priority"]]
+            if input_data.get("projectId"):
+                tasks = [t for t in tasks if t.get("projectId") == input_data["projectId"]]
+
+            # Apply offset
+            offset = input_data.get("offset", 0)
+            tasks = tasks[offset:]
+
+            # Slim the tasks - remove nested schedules, calendar events, household graphs
+            slimmed = []
+            for task in tasks:
+                slim_task = {
+                    k: v for k, v in task.items()
+                    if k not in {"schedules", "calendarEvents", "householdGraphs", "nested"}
+                }
+                slimmed.append(slim_task)
+            tasks = slimmed
+
+            # Apply limit and truncate
+            from mind_your_now.tools import truncate
+            data = {"tasks": tasks}
+            if input_data.get("limit"):
+                data = truncate(data, "tasks", int(input_data["limit"]))
+
+        return tool_result(data)
 
     if action in {"get", "update", "complete", "archive"}:
         task_id = input_data.get("taskId")
