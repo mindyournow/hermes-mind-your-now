@@ -13,6 +13,43 @@ from mind_your_now.client import MynApiError
 logger = logging.getLogger(__name__)
 
 
+def truncate(payload: dict[str, Any], key: str, limit: int, *, offset: int = 0) -> dict[str, Any]:
+    """Apply client-side limit/offset to a list in the payload and mark if truncated.
+
+    When the list is cut by limit or offset, sets _truncated: true and _totalCount to
+    the pre-cut length. Silent truncation is worse than none — the markers are mandatory
+    so the model knows it's looking at a slice.
+
+    Args:
+        payload: The response dict containing the list to truncate
+        key: The key in payload whose value is the list to slice
+        limit: Maximum number of items to return
+        offset: Number of items to skip from the start (default 0)
+
+    Returns:
+        The payload with the list sliced and truncation markers added if necessary
+    """
+    items = payload.get(key, [])
+    if not isinstance(items, list):
+        return payload
+
+    total_count = len(items)
+    start = offset
+    end = offset + limit
+    sliced = items[start:end]
+
+    # Only modify if we actually cut something
+    if len(sliced) < total_count:
+        return {
+            **payload,
+            key: sliced,
+            "_truncated": True,
+            "_totalCount": total_count,
+        }
+
+    return payload
+
+
 def tool_result(payload: Any) -> str:
     from tools.registry import tool_result as hermes_tool_result
 
