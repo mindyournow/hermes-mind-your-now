@@ -1,4 +1,8 @@
-"""myn_projects: project and category management."""
+"""myn_projects: project and category management.
+
+Project graphs are nested (owner/account relationships). Trimmed via client-side truncate
+and slimmed to remove nested graphs. See MIN-933 for scoped project filtering.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ PROJECTS_SCHEMA = action_schema(
         "targetProjectId": {"type": "string", "format": "uuid"},
         "includeArchived": {"type": "boolean", "default": False},
         "includeStats": {"type": "boolean", "default": True},
+        "limit": {"type": "number", "description": "Maximum projects to return (client-side truncation)"},
     },
 )
 
@@ -36,7 +41,25 @@ def execute_projects(client: MynApiClient, **input_data: Any) -> str:
             params["includeArchived"] = "true"
         if input_data.get("includeStats"):
             params["includeStats"] = "true"
-        return tool_result(client.get("/api/project/defaults", params=params))
+        data = client.get("/api/project/defaults", params=params)
+
+        # Slim output - remove nested owner/account graphs
+        if isinstance(data, dict) and isinstance(data.get("projects"), list):
+            slimmed = []
+            for project in data["projects"]:
+                slim_project = {
+                    k: v for k, v in project.items()
+                    if k not in {"owner", "account", "ownerAccount", "graphs", "nested"}
+                }
+                slimmed.append(slim_project)
+            data["projects"] = slimmed
+
+            # Apply truncate if limit specified
+            from mind_your_now.tools import truncate
+            if input_data.get("limit"):
+                data = truncate(data, "projects", int(input_data["limit"]))
+
+        return tool_result(data)
 
     if action == "get":
         project_id = input_data.get("projectId")
