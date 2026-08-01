@@ -63,10 +63,17 @@ def register_myn_tool(
     emoji: str,
 ) -> None:
     """Register one guarded handler in the shared MYN toolset."""
+    # Wrap the bare JSON Schema parameters in a complete OpenAI function object
+    # because hermes-agent's registry emits entry.schema verbatim as the function spec.
+    wrapped_schema = {
+        "name": name,
+        "description": description,
+        "parameters": schema,
+    }
     ctx.register_tool(
         name=name,
         toolset="mind-your-now",
-        schema=schema,
+        schema=wrapped_schema,
         handler=guarded(check_fn, handler),
         check_fn=check_fn,
         description=description,

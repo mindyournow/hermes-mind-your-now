@@ -170,3 +170,49 @@ def test_register_survives_bad_config(tmp_path, monkeypatch):
     assert context.commands == []
     assert len(context.logger.warnings) == 1
     assert "Refusing non-HTTPS base_url" in context.logger.warnings[0]
+
+
+def test_all_tools_emit_valid_openai_function_schemas(tmp_path, monkeypatch):
+    """Verify that tool schemas are complete OpenAI function objects with parameters."""
+    clear_config(monkeypatch, tmp_path)
+    monkeypatch.setenv("MYN_API_KEY", "myn-key")
+    context = Context()
+
+    register(context)
+
+    for tool in context.tools:
+        # Each tool's schema should be a complete OpenAI function object
+        schema = tool["schema"]
+        assert isinstance(schema, dict), f"{tool['name']}: schema is not a dict"
+        assert "name" in schema, f"{tool['name']}: missing 'name' key"
+        assert "description" in schema, f"{tool['name']}: missing 'description' key"
+        assert "parameters" in schema, f"{tool['name']}: missing 'parameters' key"
+
+        # name and description must match
+        assert schema["name"] == tool["name"], f"{tool['name']}: schema name mismatch"
+        assert isinstance(schema["description"], str), f"{tool['name']}: description not a string"
+        assert len(schema["description"]) > 0, f"{tool['name']}: description is empty"
+
+        # parameters must be a valid JSON Schema object with properties
+        parameters = schema["parameters"]
+        assert isinstance(parameters, dict), f"{tool['name']}: parameters is not a dict"
+        assert "type" in parameters, f"{tool['name']}: parameters missing 'type'"
+        assert parameters["type"] == "object", f"{tool['name']}: parameters type is not 'object'"
+        assert "properties" in parameters, f"{tool['name']}: parameters missing 'properties'"
+        assert isinstance(parameters["properties"], dict), f"{tool['name']}: properties is not a dict"
+        assert len(parameters["properties"]) > 0, f"{tool['name']}: properties is empty"
+
+        # The 'action' property must be present with an enum
+        assert "action" in parameters["properties"], f"{tool['name']}: action property missing"
+        action_prop = parameters["properties"]["action"]
+        assert "enum" in action_prop, f"{tool['name']}: action enum missing"
+        assert len(action_prop["enum"]) > 0, f"{tool['name']}: action enum is empty"
+
+        # required must include 'action'
+        assert "required" in parameters, f"{tool['name']}: required list missing"
+        assert "action" in parameters["required"], f"{tool['name']}: action not in required"
+
+        # The schema should not have a stray top-level "type" key
+        # (it should only be inside parameters)
+        assert "type" not in {k for k in schema.keys() if k != "parameters"}, \
+            f"{tool['name']}: found unexpected top-level 'type' key in schema"
