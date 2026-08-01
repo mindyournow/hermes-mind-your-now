@@ -30,6 +30,7 @@ LISTS_SCHEMA = action_schema(
         "notes": {"type": "string"},
         "itemId": {"type": "string", "format": "uuid"},
         "checked": {"type": "boolean"},
+        "dryRun": {"type": "boolean", "description": "Preview the action without making changes (delete_checked, convert_to_tasks only)"},
         "uncheckedOnly": {"type": "boolean", "default": True},
         "priority": {
             "type": "string",
@@ -91,8 +92,19 @@ def execute_lists(client: MynApiClient, **input_data: Any) -> str:
         return tool_result(client.post(base_path, body))
 
     if action == "toggle":
+        item_id = input_data["itemId"]
+        requested_checked = input_data.get("checked")
+        # Read current state to check if we need to toggle
+        current = client.get(f"{base_path}/{item_id}")
+        if isinstance(current, dict):
+            current_checked = current.get("checked", False)
+            # Only toggle if the requested state differs from current state
+            if requested_checked is not None and current_checked == requested_checked:
+                # Already in desired state, return unchanged
+                return tool_result(current)
+        # Issue toggle PATCH
         return tool_result(
-            client.patch(f"{base_path}/{input_data['itemId']}/toggle", {})
+            client.patch(f"{base_path}/{item_id}/toggle", {})
         )
 
     if action == "bulk_add":
@@ -123,13 +135,37 @@ def execute_lists(client: MynApiClient, **input_data: Any) -> str:
         return tool_result(client.delete(f"{base_path}/{input_data['itemId']}"))
 
     if action == "delete_checked":
+        if input_data.get("dryRun"):
+            # Dry run: fetch and return checked items without deleting
+            items_data = client.get(base_path)
+            if isinstance(items_data, dict) and isinstance(items_data.get("items"), list):
+                checked = [item for item in items_data["items"] if item.get("checked")]
+                return tool_result({
+                    "dryRun": True,
+                    "items": checked,
+                    "count": len(checked),
+                })
+            return tool_result({"dryRun": True, "items": [], "count": 0})
         return tool_result(client.delete(f"{base_path}/checked"))
 
-    unchecked_only = input_data.get("uncheckedOnly")
-    body = {"uncheckedOnly": True if unchecked_only is None else unchecked_only}
-    if input_data.get("priority"):
-        body["priority"] = input_data["priority"]
-    return tool_result(client.post(f"{base_path}/convert-to-tasks", body))
+    if action == "convert_to_tasks":
+        unchecked_only = input_data.get("uncheckedOnly")
+        body = {"uncheckedOnly": True if unchecked_only is None else unchecked_only}
+        if input_data.get("priority"):
+            body["priority"] = input_data["priority"]
+        if input_data.get("dryRun"):
+            # Dry run: fetch items, filter, but don't convert
+            items_data = client.get(base_path)
+            if isinstance(items_data, dict) and isinstance(items_data.get("items"), list):
+                items = items_data["items"]
+                filtered = [item for item in items if not unchecked_only or not item.get("checked")]
+                return tool_result({
+                    "dryRun": True,
+                    "items": filtered,
+                    "count": len(filtered),
+                })
+            return tool_result({"dryRun": True, "items": [], "count": 0})
+        return tool_result(client.post(f"{base_path}/convert-to-tasks", body))
 
 
 def register_lists_tool(

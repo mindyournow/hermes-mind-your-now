@@ -1,4 +1,8 @@
-"""myn_habits: habit tracking, streaks, chains, and reminders."""
+"""myn_habits: habit tracking, streaks, chains, and schedules.
+
+The reminders action was removed as 404-by-construction. Restoration is blocked on MIN-932
+and cross-references MIN-883.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +15,7 @@ from mind_your_now.tools import register_myn_tool, tool_error, tool_result
 
 
 HABITS_SCHEMA = action_schema(
-    ["streaks", "skip", "chains", "schedule", "reminders"],
+    ["streaks", "skip", "chains", "schedule"],
     {
         "habitId": {"type": "string", "format": "uuid"},
         "includeHistory": {"type": "boolean", "default": False},
@@ -23,11 +27,7 @@ HABITS_SCHEMA = action_schema(
             "default": 7,
             "description": "Number of days to look ahead",
         },
-        "enableReminders": {"type": "boolean"},
-        "reminderTime": {
-            "type": "string",
-            "pattern": "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$",
-        },
+        "limit": {"type": "number", "description": "Maximum habits to return (schedule action only)"},
     },
 )
 
@@ -39,7 +39,7 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
         habit_id = input_data.get("habitId")
         if not habit_id:
             return tool_error(
-                "habitId is required for streaks action. Use the schedule action to see all habits."
+                "habitId is required for streaks action. Use schedule (which lists habits) to find the habitId."
             )
         params = {"includeHistory": "true"} if input_data.get("includeHistory") else None
         return tool_result(
@@ -65,29 +65,16 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
         return tool_result(client.get(path))
 
     if action == "schedule":
-        params = (
-            {"days": input_data["dateRange"]}
-            if input_data.get("dateRange") is not None
-            else None
-        )
-        return tool_result(
-            client.get("/api/v2/unified-tasks/schedule", params=params)
-        )
-
-    if action == "reminders":
-        habit_id = input_data.get("habitId")
-        if not habit_id:
-            return tool_result(client.get("/api/habits/reminders"))
-        enable_reminders = input_data.get("enableReminders")
-        reminder_time = input_data.get("reminderTime")
-        if enable_reminders is None and not reminder_time:
-            return tool_result(client.get(f"/api/habits/reminders/{habit_id}"))
-        body = {}
-        if enable_reminders is not None:
-            body["enabled"] = enable_reminders
-        if reminder_time:
-            body["time"] = reminder_time
-        return tool_result(client.put(f"/api/habits/reminders/{habit_id}", body))
+        from mind_your_now.tools import truncate
+        params = {"taskType": "HABIT"}
+        if input_data.get("dateRange") is not None:
+            params["days"] = input_data["dateRange"]
+        data = client.get("/api/v2/unified-tasks", params=params)
+        # Filter to habits and trim via truncate
+        if isinstance(data, dict) and isinstance(data.get("tasks"), list):
+            data["tasks"] = [t for t in data["tasks"] if t.get("taskType") == "HABIT"]
+            data = truncate(data, "tasks", 50)  # Default limit of 50
+        return tool_result(data)
 
     return tool_error(f"Unknown action: {action}")
 

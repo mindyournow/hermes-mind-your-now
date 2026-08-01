@@ -1,4 +1,11 @@
-"""myn_planning: AI planning and scheduling."""
+"""myn_planning: AI planning and scheduling.
+
+⚠️  WARNING: All three planning actions (plan, schedule_all, reschedule) mutate scheduling
+state despite their read-shaped API surfaces. They are user-wide, not scoped to a single
+task or date. The model MUST ask the user for permission before calling any planning action.
+
+See MIN-932 for scoped planning support.
+"""
 
 from __future__ import annotations
 
@@ -13,43 +20,7 @@ from mind_your_now.tools import register_myn_tool, tool_error, tool_result
 PLANNING_SCHEMA = action_schema(
     ["plan", "schedule_all", "reschedule"],
     {
-        "goal": {"type": "string", "description": "What you want to accomplish"},
-        "constraints": {
-            "type": "object",
-            "properties": {
-                "availableHours": {"type": "number"},
-                "preferredTimes": {"type": "array", "items": {"type": "string"}},
-                "avoidTimes": {"type": "array", "items": {"type": "string"}},
-                "deadline": {"type": "string", "format": "date-time"},
-                "priority": {
-                    "type": "string",
-                    "enum": ["CRITICAL", "OPPORTUNITY_NOW", "OVER_THE_HORIZON"],
-                },
-            },
-        },
-        "tasks": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "estimatedDuration": {"type": "number"},
-                    "dependsOn": {"type": "array", "items": {"type": "string"}},
-                    "fixedTime": {"type": "string", "format": "date-time"},
-                },
-                "required": ["title"],
-            },
-        },
-        "date": {"type": "string", "format": "date"},
-        "respectExisting": {"type": "boolean", "default": True},
-        "bufferMinutes": {"type": "number", "default": 15},
-        "taskIds": {
-            "type": "array",
-            "items": {"type": "string", "format": "uuid"},
-        },
-        "reason": {"type": "string"},
-        "targetDate": {"type": "string", "format": "date"},
-        "spreadOverDays": {"type": "number", "default": 1},
+        "spreadOverDays": {"type": "number", "default": 1, "description": "Number of days to spread scheduling over (reschedule only)"},
     },
 )
 
@@ -84,8 +55,9 @@ def register_planning_tool(
         handler=lambda **kwargs: execute_planning(client, **kwargs),
         check_fn=check_fn,
         description=(
-            "AI-powered planning and scheduling. Actions: plan, schedule_all, "
-            "reschedule."
+            "AI-powered planning and scheduling. Actions: plan, schedule_all, reschedule. "
+            "⚠️ ALL ACTIONS ARE USER-WIDE AND MUTATE SCHEDULING STATE. "
+            "ASK THE USER FOR PERMISSION BEFORE CALLING."
         ),
         emoji="🗓️",
     )
