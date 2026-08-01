@@ -46,23 +46,23 @@ def build_handler(transport):
 
 
 @pytest.mark.parametrize(
-    ("input_data", "method", "path"),
+    ("input_data", "methods_paths"),
     [
-        ({"action": "get", "householdId": HOUSEHOLD_ID}, "GET", BASE),
+        (
+            {"action": "get", "householdId": HOUSEHOLD_ID},
+            [("GET", BASE)],
+        ),
         (
             {"action": "add", "householdId": HOUSEHOLD_ID, "item": "Milk"},
-            "POST",
-            BASE,
+            [("POST", BASE)],
         ),
         (
             {"action": "toggle", "householdId": HOUSEHOLD_ID, "itemId": ITEM_ID},
-            "PATCH",
-            f"{BASE}/{ITEM_ID}/toggle",
+            [("GET", f"{BASE}/{ITEM_ID}"), ("PATCH", f"{BASE}/{ITEM_ID}/toggle")],
         ),
         (
             {"action": "bulk_add", "householdId": HOUSEHOLD_ID, "items": ["Milk"]},
-            "POST",
-            f"{BASE}/bulk",
+            [("POST", f"{BASE}/bulk")],
         ),
         (
             {
@@ -71,27 +71,23 @@ def build_handler(transport):
                 "itemId": ITEM_ID,
                 "item": "Oat milk",
             },
-            "PATCH",
-            f"{BASE}/{ITEM_ID}",
+            [("PATCH", f"{BASE}/{ITEM_ID}")],
         ),
         (
             {"action": "delete", "householdId": HOUSEHOLD_ID, "itemId": ITEM_ID},
-            "DELETE",
-            f"{BASE}/{ITEM_ID}",
+            [("DELETE", f"{BASE}/{ITEM_ID}")],
         ),
         (
             {"action": "delete_checked", "householdId": HOUSEHOLD_ID},
-            "DELETE",
-            f"{BASE}/checked",
+            [("DELETE", f"{BASE}/checked")],
         ),
         (
             {"action": "convert_to_tasks", "householdId": HOUSEHOLD_ID},
-            "POST",
-            f"{BASE}/convert-to-tasks",
+            [("POST", f"{BASE}/convert-to-tasks")],
         ),
     ],
 )
-def test_actions_use_expected_methods_and_paths(input_data, method, path):
+def test_actions_use_expected_methods_and_paths(input_data, methods_paths):
     observed = []
     payload = {"marker": input_data["action"]}
 
@@ -101,7 +97,7 @@ def test_actions_use_expected_methods_and_paths(input_data, method, path):
 
     result = json.loads(build_handler(transport)(**input_data))
 
-    assert observed == [(method, path)]
+    assert observed == methods_paths
     assert result == {"success": True, "data": payload}
 
 

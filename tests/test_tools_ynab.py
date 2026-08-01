@@ -104,6 +104,7 @@ CASES = [
         "/api/v1/ynab/budget/categories/search",
     ),
     ({"action": "list_categories"}, "GET", "/api/v1/ynab/budget/categories"),
+    ({"action": "list_budgets"}, "GET", "/api/v1/ynab/budget/budgets"),
     ({"action": "account_balances"}, "GET", "/api/v1/ynab/budget/accounts"),
     (
         {"action": "set_budget_amount", "categoryName": "Groceries", "amount": 200},
