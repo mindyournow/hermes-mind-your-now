@@ -81,6 +81,19 @@ def execute_memory(client: MynApiClient, **input_data: Any) -> str:
             if not match:
                 return tool_error(f"Memory not found: {memory_id}")
             return tool_result(match)
+
+        # Apply client-side limit to recall (when not searching by id)
+        from mind_your_now.tools import truncate
+        limit = input_data.get("limit")
+        if limit:
+            # Normalize data to have "memories" key if wrapped differently
+            if isinstance(data, dict) and "memories" not in data:
+                # Assume data is the raw response, wrap it
+                data = {"memories": data.get("items", data.get("results", []))}
+            elif isinstance(data, list):
+                data = {"memories": data}
+            data = truncate(data, "memories", int(limit))
+
         return tool_result(data)
 
     if action == "forget":
