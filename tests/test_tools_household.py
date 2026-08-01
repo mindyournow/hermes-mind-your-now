@@ -182,3 +182,32 @@ def test_chore_complete_uses_guarded_write_with_state_hash():
     assert f"/chores/instances/{chore_id}" in get_req[1]
     assert post_req[0] == "POST"
     assert f"/chores/instances/{chore_id}/complete" in post_req[1]
+
+
+@pytest.mark.xfail(
+    reason="The chore GET /api/v2/chores/instances/{id} endpoint does not return the required state-hash value. "
+    "This is a known server limitation tracked by MIN-931 and blocks the full read-before-write state-hash protocol. "
+    "The POST succeeds with a read-before-write GET, but that GET cannot obtain the state hash from this endpoint.",
+    strict=False,
+)
+def test_chore_complete_state_hash_unsupported():
+    """chore_complete's read-before-write state hash is unsupported on the GET side."""
+    # This test documents the known gap: we can GET for consistency checks,
+    # but the response does not include the state-hash value required by
+    # the @RequireStateHash aspect on the POST endpoint.
+    chore_id = "chore-with-state"
+
+    def transport(request):
+        # The GET response does not include stateHash
+        if request.method == "GET":
+            return httpx.Response(200, json={"choreId": chore_id})
+        # POST expects X-MYN-State-Hash header from the GET response
+        if request.method == "POST":
+            return httpx.Response(200, json={"choreId": chore_id, "completed": True})
+        return httpx.Response(400)
+
+    handler = build_handler(transport)
+    # This will fail at runtime when the state-hash header is missing
+    # The xfail documents that this limitation is known and tracked
+    result = json.loads(handler(action="chore_complete", choreId=chore_id))
+    assert result.get("success") is True

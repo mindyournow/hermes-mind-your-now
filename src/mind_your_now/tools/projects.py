@@ -43,23 +43,30 @@ def execute_projects(client: MynApiClient, **input_data: Any) -> str:
             params["includeStats"] = "true"
         data = client.get("/api/project/defaults", params=params)
 
+        # Normalize bare array or wrapped response
+        if isinstance(data, list):
+            projects = data
+        elif isinstance(data, dict) and isinstance(data.get("projects"), list):
+            projects = data["projects"]
+        else:
+            return tool_result(data)
+
         # Slim output - remove nested owner/account graphs
-        if isinstance(data, dict) and isinstance(data.get("projects"), list):
-            slimmed = []
-            for project in data["projects"]:
-                slim_project = {
-                    k: v for k, v in project.items()
-                    if k not in {"owner", "account", "ownerAccount", "graphs", "nested"}
-                }
-                slimmed.append(slim_project)
-            data["projects"] = slimmed
+        slimmed = []
+        for project in projects:
+            slim_project = {
+                k: v for k, v in project.items()
+                if k not in {"owner", "account", "ownerAccount", "graphs", "nested"}
+            }
+            slimmed.append(slim_project)
 
-            # Apply truncate if limit specified
-            from mind_your_now.tools import truncate
-            if input_data.get("limit"):
-                data = truncate(data, "projects", int(input_data["limit"]))
+        # Apply truncate if limit specified
+        from mind_your_now.tools import truncate
+        result = {"projects": slimmed}
+        if input_data.get("limit"):
+            result = truncate(result, "projects", int(input_data["limit"]))
 
-        return tool_result(data)
+        return tool_result(result)
 
     if action == "get":
         project_id = input_data.get("projectId")

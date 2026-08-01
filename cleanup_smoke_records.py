@@ -22,10 +22,14 @@ def cleanup_stranded_records(client: MynApiClient) -> None:
         return
 
     # Delete the two known stranded records
-    # Task d14677dc-c1c1-487f-a3a7-92cb9aa7a02b
+    # Task d14677dc-c1c1-487f-a3a7-92cb9aa7a02b (requires state-hash guarded write)
     task_id = "d14677dc-c1c1-487f-a3a7-92cb9aa7a02b"
     try:
-        client.delete(f"/api/v2/unified-tasks/{task_id}")
+        client.guarded_write(
+            "DELETE",
+            f"/api/v2/unified-tasks/{task_id}",
+            get_path=f"/api/v2/unified-tasks/{task_id}",
+        )
         # Verify deleted
         try:
             client.get(f"/api/v2/unified-tasks/{task_id}")

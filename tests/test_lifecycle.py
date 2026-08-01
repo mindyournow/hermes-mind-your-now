@@ -7,7 +7,7 @@ import types
 import httpx
 import pytest
 
-from mind_your_now.client import MynApiClient
+from mind_your_now.client import MynApiClient, MynApiError
 
 
 @pytest.fixture(autouse=True)
@@ -25,8 +25,9 @@ SMOKE_MARKER = "HERMES-SMOKE-"
 
 
 def test_task_lifecycle_with_cleanup():
-    """Task lifecycle: create → read → update → delete → verify-absent."""
+    """Task lifecycle: create → read → update → delete → verify-absent with guaranteed cleanup."""
     requests = []
+    created_task_id = None
 
     def transport(request):
         requests.append((request.method, request.url.path))
@@ -53,34 +54,37 @@ def test_task_lifecycle_with_cleanup():
     try:
         # Create
         task = client.post("/api/v2/unified-tasks", {"title": f"{SMOKE_MARKER}Task"})
-        task_id = task.get("id")
-        assert task_id
+        created_task_id = task.get("id")
+        assert created_task_id
 
         # Read
-        fetched = client.get(f"/api/v2/unified-tasks/{task_id}")
-        assert fetched["id"] == task_id
+        fetched = client.get(f"/api/v2/unified-tasks/{created_task_id}")
+        assert fetched["id"] == created_task_id
 
         # Update
-        updated = client.patch(f"/api/v2/unified-tasks/{task_id}", {"title": "updated"})
+        updated = client.patch(f"/api/v2/unified-tasks/{created_task_id}", {"title": "updated"})
         assert updated
 
         # Delete
-        client.delete(f"/api/v2/unified-tasks/{task_id}")
+        client.delete(f"/api/v2/unified-tasks/{created_task_id}")
 
         # Verify absent
-        try:
-            client.get(f"/api/v2/unified-tasks/{task_id}")
-            assert False, "Should be 404"
-        except Exception:
-            pass  # Expected 404
+        with pytest.raises(MynApiError) as exc_info:
+            client.get(f"/api/v2/unified-tasks/{created_task_id}")
+        assert exc_info.value.status == 404
     finally:
         # Cleanup in finally block - guaranteed even if test fails
-        pass
+        if created_task_id:
+            try:
+                client.delete(f"/api/v2/unified-tasks/{created_task_id}")
+            except Exception:
+                pass  # Best-effort cleanup
 
 
 def test_calendar_event_lifecycle_with_cleanup():
-    """Calendar event lifecycle: create → read → update → delete → verify-absent."""
+    """Calendar event lifecycle: create → read → update → delete → verify-absent with guaranteed cleanup."""
     requests = []
+    created_event_id = None
 
     def transport(request):
         requests.append((request.method, request.url.path))
@@ -105,32 +109,74 @@ def test_calendar_event_lifecycle_with_cleanup():
     try:
         # Create
         event = client.post("/api/v2/calendar/standalone-events", {"title": f"{SMOKE_MARKER}Event"})
-        event_id = event.get("id")
-        assert event_id
+        created_event_id = event.get("id")
+        assert created_event_id
 
         # Read
-        fetched = client.get(f"/api/v2/calendar/events/{event_id}")
-        assert fetched["id"] == event_id
+        fetched = client.get(f"/api/v2/calendar/events/{created_event_id}")
+        assert fetched["id"] == created_event_id
 
         # Update
-        updated = client.patch(f"/api/v2/calendar/standalone-events/{event_id}", {"title": "updated"})
+        updated = client.patch(f"/api/v2/calendar/standalone-events/{created_event_id}", {"title": "updated"})
         assert updated
 
         # Delete
-        client.delete(f"/api/v2/calendar/standalone-events/{event_id}")
+        client.delete(f"/api/v2/calendar/standalone-events/{created_event_id}")
 
         # Verify absent
-        try:
-            client.get(f"/api/v2/calendar/events/{event_id}")
-            assert False, "Should be 404"
-        except Exception:
-            pass
+        with pytest.raises(MynApiError) as exc_info:
+            client.get(f"/api/v2/calendar/events/{created_event_id}")
+        assert exc_info.value.status == 404
     finally:
-        pass
+        # Cleanup in finally block - guaranteed even if test fails
+        if created_event_id:
+            try:
+                client.delete(f"/api/v2/calendar/standalone-events/{created_event_id}")
+            except Exception:
+                pass  # Best-effort cleanup
 
 
 def test_cleanup_smoke_records():
-    """Helper to find and delete HERMES-SMOKE- marked records."""
-    # This would normally fetch from MYN and delete records with the marker
-    # In tests, we use mocked transport so no real records are created
-    pass
+    """Test the cleanup helper against mocked responses."""
+    from cleanup_smoke_records import cleanup_stranded_records
+    import os
+
+    requests = []
+    deleted_ids = set()
+
+    def transport(request):
+        requests.append((request.method, request.url.path))
+        method, path = request.method, request.url.path
+
+        # Task deletion
+        if method == "DELETE" and "/api/v2/unified-tasks/" in path:
+            task_id = path.split("/")[-1]
+            deleted_ids.add(task_id)
+            return httpx.Response(204)
+
+        # Calendar deletion
+        if method == "DELETE" and "/api/v2/calendar/standalone-events/" in path:
+            event_id = path.split("/")[-1]
+            deleted_ids.add(event_id)
+            return httpx.Response(204)
+
+        # Task GET (verify not found)
+        if method == "GET" and task_id in deleted_ids:
+            return httpx.Response(404)
+
+        # Calendar GET (verify not found)
+        if method == "GET" and event_id in deleted_ids:
+            return httpx.Response(404)
+
+        return httpx.Response(200, json={})
+
+    client = MynApiClient("https://api.example.com", "test-key", transport=httpx.MockTransport(transport))
+
+    # Enable cleanup
+    os.environ["HERMES_ALLOW_CLEANUP"] = "1"
+    try:
+        cleanup_stranded_records(client)
+        # Verify that the DELETE requests were issued
+        assert len([req for req in requests if req[0] == "DELETE"]) >= 1
+    finally:
+        del os.environ["HERMES_ALLOW_CLEANUP"]

@@ -57,6 +57,7 @@ def _redact_secrets(obj: Any) -> Any:
         "refresh_token", "refreshtoken", "authorization", "cookie", "sessiontoken",
         "session_token", "credential", "credentials", "auth", "accesstoken",
         "access_token", "clientsecret", "client_secret",
+        "myninboundkey", "inboundkey", "agentkey", "agent_key",
     }
 
     if isinstance(obj, dict):

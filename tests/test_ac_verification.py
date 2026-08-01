@@ -351,8 +351,8 @@ def test_wi7c_ac1_schedule_returns_habits_via_unified_tasks():
 
     assert observed[-1][0] == "GET"
     assert observed[-1][1] == "/api/v2/unified-tasks"
-    assert "taskType" in observed[-1][2]
-    assert observed[-1][2]["taskType"] == "HABIT"
+    assert "type" in observed[-1][2]
+    assert observed[-1][2]["type"] == "HABIT"
     assert result["success"] is True
 
 

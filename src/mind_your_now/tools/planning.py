@@ -35,29 +35,23 @@ def execute_planning(client: MynApiClient, **input_data: Any) -> str:
         return tool_result({"result": client.get("/planning/plan")})
     if action == "schedule_all":
         if input_data.get("dryRun"):
-            # Dry run: fetch what would be scheduled but don't apply
-            result = client.post("/planning/scheduleAll", {})
+            # Dry run: return unsupported message without calling mutating endpoint
             return tool_result({
                 "dryRun": True,
-                "tasks": result.get("tasks", []) if isinstance(result, dict) else [],
-                "count": len(result.get("tasks", [])) if isinstance(result, dict) else 0,
-                "message": "Engine decisions cannot be previewed — only the affected task set is shown. See MIN-932 for scope."
+                "tasks": [],
+                "count": 0,
+                "message": "dryRun is not supported for schedule_all until MIN-932 adds server-side preview. Use schedule_all without dryRun to apply scheduling."
             })
         return tool_result({"result": client.post("/planning/scheduleAll", {})})
     if action == "reschedule":
         rebalance = "true" if (input_data.get("spreadOverDays") or 0) > 1 else "false"
         if input_data.get("dryRun"):
-            # Dry run: fetch what would be rescheduled but don't apply
-            result = client.post(
-                "/planning/kickTheCan",
-                {},
-                params={"rebalance": rebalance},
-            )
+            # Dry run: return unsupported message without calling mutating endpoint
             return tool_result({
                 "dryRun": True,
-                "tasks": result.get("tasks", []) if isinstance(result, dict) else [],
-                "count": len(result.get("tasks", [])) if isinstance(result, dict) else 0,
-                "message": "Engine decisions cannot be previewed — only the affected task set is shown. See MIN-932 for scope."
+                "tasks": [],
+                "count": 0,
+                "message": "dryRun is not supported for reschedule until MIN-932 adds server-side preview. Use reschedule without dryRun to apply rescheduling."
             })
         return tool_result(
             client.post(

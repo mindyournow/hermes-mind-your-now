@@ -98,7 +98,7 @@ def test_streak_history_and_schedule_days_use_params():
 
     assert observed == [
         (f"/api/v2/unified-tasks/{HABIT_ID}/streak", {"includeHistory": "true"}),
-        ("/api/v2/unified-tasks", {"taskType": "HABIT", "days": "14"}),
+        ("/api/v2/unified-tasks", {"type": "HABIT", "days": "14"}),
     ]
 
 

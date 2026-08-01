@@ -94,9 +94,23 @@ def execute_lists(client: MynApiClient, **input_data: Any) -> str:
     if action == "toggle":
         item_id = input_data["itemId"]
         requested_checked = input_data.get("checked")
-        # Read current state to check if we need to toggle
-        current = client.get(f"{base_path}/{item_id}")
-        if isinstance(current, dict):
+        # Read collection to find current state
+        items_data = client.get(base_path)
+        current = None
+
+        # Try different response shapes
+        if isinstance(items_data, list):
+            # Bare array response
+            current = next((item for item in items_data if item.get("id") == item_id), None)
+        elif isinstance(items_data, dict):
+            # Check if it's a wrapped collection
+            if "items" in items_data:
+                current = next((item for item in items_data["items"] if item.get("id") == item_id), None)
+            # Or it might be the single item itself (for some implementations)
+            elif items_data.get("id") == item_id:
+                current = items_data
+
+        if current:
             current_checked = current.get("checked", False)
             # Only toggle if the requested state differs from current state
             if requested_checked is not None and current_checked == requested_checked:
@@ -149,12 +163,13 @@ def execute_lists(client: MynApiClient, **input_data: Any) -> str:
         return tool_result(client.delete(f"{base_path}/checked"))
 
     if action == "convert_to_tasks":
-        unchecked_only = input_data.get("uncheckedOnly")
-        body = {"uncheckedOnly": True if unchecked_only is None else unchecked_only}
+        # Normalize uncheckedOnly to the effective value
+        unchecked_only = True if input_data.get("uncheckedOnly") is None else input_data.get("uncheckedOnly")
+        body = {"uncheckedOnly": unchecked_only}
         if input_data.get("priority"):
             body["priority"] = input_data["priority"]
         if input_data.get("dryRun"):
-            # Dry run: fetch items, filter, but don't convert
+            # Dry run: fetch items, filter using the same default, but don't convert
             items_data = client.get(base_path)
             if isinstance(items_data, dict) and isinstance(items_data.get("items"), list):
                 items = items_data["items"]

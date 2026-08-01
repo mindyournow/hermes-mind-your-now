@@ -164,46 +164,57 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
                 "status",
                 "priority",
                 "projectId",
-                "startDate",
-                "endDate",
             )
             if input_data.get(key) is not None
         }
         data = client.get("/api/v2/unified-tasks", params=params)
 
-        # Apply client-side filters
-        if isinstance(data, dict) and isinstance(data.get("tasks"), list):
+        # Normalize bare array or wrapped response
+        if isinstance(data, list):
+            tasks = data
+        elif isinstance(data, dict) and isinstance(data.get("tasks"), list):
             tasks = data["tasks"]
+        else:
+            return tool_result(data)
 
-            # Filter by status/priority/projectId (already done by API, but ensure client-side enforcement)
-            if input_data.get("status"):
-                tasks = [t for t in tasks if t.get("status") == input_data["status"]]
-            if input_data.get("priority"):
-                tasks = [t for t in tasks if t.get("priority") == input_data["priority"]]
-            if input_data.get("projectId"):
-                tasks = [t for t in tasks if t.get("projectId") == input_data["projectId"]]
+        # Filter by status/priority/projectId (already done by API, but ensure client-side enforcement)
+        if input_data.get("status"):
+            tasks = [t for t in tasks if t.get("status") == input_data["status"]]
+        if input_data.get("priority"):
+            tasks = [t for t in tasks if t.get("priority") == input_data["priority"]]
+        if input_data.get("projectId"):
+            tasks = [t for t in tasks if t.get("projectId") == input_data["projectId"]]
 
-            # Apply offset
-            offset = input_data.get("offset", 0)
-            tasks = tasks[offset:]
+        # Filter by date range (client-side since server-side filtering is deferred to MIN-932)
+        if input_data.get("startDate"):
+            start_date = input_data["startDate"]
+            tasks = [t for t in tasks if t.get("dueDate", "") >= start_date]
+        if input_data.get("endDate"):
+            end_date = input_data["endDate"]
+            tasks = [t for t in tasks if t.get("dueDate", "") <= end_date]
 
-            # Slim the tasks - remove nested schedules, calendar events, household graphs
-            slimmed = []
-            for task in tasks:
-                slim_task = {
-                    k: v for k, v in task.items()
-                    if k not in {"schedules", "calendarEvents", "householdGraphs", "nested"}
-                }
-                slimmed.append(slim_task)
-            tasks = slimmed
+        # Slim the tasks - remove nested schedules, calendar events, household graphs
+        slimmed = []
+        for task in tasks:
+            slim_task = {
+                k: v for k, v in task.items()
+                if k not in {"schedules", "calendarEvents", "householdGraphs", "nested"}
+            }
+            slimmed.append(slim_task)
 
-            # Apply limit and truncate
-            from mind_your_now.tools import truncate
-            data = {"tasks": tasks}
-            if input_data.get("limit"):
-                data = truncate(data, "tasks", int(input_data["limit"]))
+        # Apply offset and limit with truncate
+        from mind_your_now.tools import truncate
+        offset = input_data.get("offset", 0)
+        limit = input_data.get("limit")
 
-        return tool_result(data)
+        result = {"tasks": slimmed}
+        if limit:
+            result = truncate(result, "tasks", int(limit), offset=offset)
+        elif offset:
+            # No limit but offset was requested - mark truncation
+            result = truncate(result, "tasks", len(slimmed), offset=offset)
+
+        return tool_result(result)
 
     if action in {"get", "update", "complete", "archive"}:
         task_id = input_data.get("taskId")

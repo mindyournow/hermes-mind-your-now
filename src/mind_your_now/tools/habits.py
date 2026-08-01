@@ -66,15 +66,25 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
 
     if action == "schedule":
         from mind_your_now.tools import truncate
-        params = {"taskType": "HABIT"}
+        params = {"type": "HABIT"}
         if input_data.get("dateRange") is not None:
             params["days"] = input_data["dateRange"]
         data = client.get("/api/v2/unified-tasks", params=params)
-        # Filter to habits and trim via truncate
-        if isinstance(data, dict) and isinstance(data.get("tasks"), list):
-            data["tasks"] = [t for t in data["tasks"] if t.get("taskType") == "HABIT"]
-            data = truncate(data, "tasks", 50)  # Default limit of 50
-        return tool_result(data)
+
+        # Normalize bare array or wrapped response
+        if isinstance(data, list):
+            habits = data
+        elif isinstance(data, dict) and isinstance(data.get("tasks"), list):
+            habits = data["tasks"]
+        else:
+            return tool_result(data)
+
+        # Defensively filter by taskType and apply limit
+        habits = [t for t in habits if t.get("taskType") == "HABIT"]
+        limit = input_data.get("limit", 50)
+        result = {"tasks": habits}
+        result = truncate(result, "tasks", int(limit))
+        return tool_result(result)
 
     return tool_error(f"Unknown action: {action}")
 
@@ -91,8 +101,8 @@ def register_habits_tool(
         handler=lambda **kwargs: execute_habits(client, **kwargs),
         check_fn=check_fn,
         description=(
-            "Track habits, streaks, and reminders. Actions: streaks, skip, "
-            "chains, schedule, reminders."
+            "Track habits and streaks. Actions: streaks, skip, chains, schedule. "
+            "Reminders are not supported (see MIN-932 and MIN-883)."
         ),
         emoji="🔁",
     )

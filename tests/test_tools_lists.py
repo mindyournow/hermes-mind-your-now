@@ -58,7 +58,7 @@ def build_handler(transport):
         ),
         (
             {"action": "toggle", "householdId": HOUSEHOLD_ID, "itemId": ITEM_ID},
-            [("GET", f"{BASE}/{ITEM_ID}"), ("PATCH", f"{BASE}/{ITEM_ID}/toggle")],
+            [("GET", BASE), ("PATCH", f"{BASE}/{ITEM_ID}/toggle")],
         ),
         (
             {"action": "bulk_add", "householdId": HOUSEHOLD_ID, "items": ["Milk"]},
