@@ -50,10 +50,32 @@ def truncate(payload: dict[str, Any], key: str, limit: int, *, offset: int = 0) 
     return payload
 
 
+def _redact_secrets(obj: Any) -> Any:
+    """Recursively redact secret-shaped keys in payload."""
+    secret_keys = {
+        "token", "apikey", "api_key", "secret", "password", "refreshtoken",
+        "refresh_token", "refreshtoken", "authorization", "cookie", "sessiontoken",
+        "session_token", "credential", "credentials", "auth", "accesstoken",
+        "access_token", "clientsecret", "client_secret",
+    }
+
+    if isinstance(obj, dict):
+        return {
+            k: "[REDACTED]" if k.lower() in secret_keys else _redact_secrets(v)
+            for k, v in obj.items()
+        }
+    elif isinstance(obj, list):
+        return [_redact_secrets(item) for item in obj]
+    else:
+        return obj
+
+
 def tool_result(payload: Any) -> str:
     from tools.registry import tool_result as hermes_tool_result
 
-    return hermes_tool_result(payload)
+    # Redact secrets before passing to hermes
+    redacted = _redact_secrets(payload)
+    return hermes_tool_result(redacted)
 
 
 def tool_error(message: str) -> str:

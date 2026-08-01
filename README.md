@@ -80,20 +80,24 @@ All tools use the Hermes toolset `mind-your-now`.
 |---|---|
 | `myn_tasks` | `list`, `get`, `create`, `update`, `complete`, `archive`, `search` |
 | `myn_debrief` | `status`, `generate`, `get`, `apply_correction`, `complete_session` |
-| `myn_calendar` | `list_calendars`, `list_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `move_event`, `meetings` |
-| `myn_habits` | `streaks`, `skip`, `chains`, `schedule`, `reminders` |
-| `myn_lists` | `get`, `add`, `toggle`, `bulk_add`, `update`, `delete`, `delete_checked`, `convert_to_tasks` |
+| `myn_calendar` | `list_calendars`, `list_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `move_event`, `meetings` (use `startTime`/`endTime` for create/update, not `startDateTime`) |
+| `myn_habits` | `streaks`, `skip`, `chains`, `schedule` |
+| `myn_lists` | `get`, `add`, `toggle`, `bulk_add`, `update`, `delete`, `delete_checked`, `convert_to_tasks` (supports `dryRun`) |
 | `myn_search` | `search` |
 | `myn_timers` | `create_countdown`, `create_alarm`, `list`, `cancel`, `snooze`, `pomodoro` |
 | `myn_memory` | `remember`, `recall`, `forget`, `search` |
 | `myn_profile` | `get_info`, `get_goals`, `update_goals`, `preferences` |
 | `myn_household` | `members`, `invite`, `chores`, `chore_schedule`, `chore_complete` |
 | `myn_projects` | `list`, `get`, `create`, `move_task` |
-| `myn_planning` | `plan`, `schedule_all`, `reschedule` |
+| `myn_planning` | `plan`, `schedule_all`, `reschedule` (all actions are user-wide and mutate scheduling state; supports `dryRun` for `schedule_all` and `reschedule`) |
 | `myn_a2a_pairing` | `pair`, `status`, `unpair`, `redeem_invite`, `ping`, `send_message`, `get_agent_card` |
 | `myn_ynab` | Budget, transaction, scheduled-transaction, analytics, connection, split, and category-management actions matching `@mind-your-now/myn` |
 
 Timers created through `myn_timers` include `sourceAgentName` and `sourceChannel`, so MYN can attribute reminders to the Hermes agent that created them.
+
+## Client-side truncation and result transparency
+
+Tools that return lists (`list_tasks`, `list_events`, `list_habits`, `list_projects`, `recall`, etc.) apply client-side limits and mark truncated results with `_truncated: true` and `_totalCount` so the model knows it's looking at a slice. Planning `dryRun` actions return the affected task set without applying changes. These markers ensure transparent communication about partial results.
 
 ## Kaia memory injection
 

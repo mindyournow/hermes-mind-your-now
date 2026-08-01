@@ -375,6 +375,40 @@ def test_wi7d_ac2_module_docstring_records_min932_blocking():
     assert "MIN-883" in habits.__doc__
 
 
+# WI-9b: Redact secrets AC
+def test_wi9b_ac1_tool_result_redacts_secrets():
+    """AC: tool_result redacts secret-shaped keys recursively."""
+    from mind_your_now.tools import tool_result
+    import json
+
+    # Test payload with secrets at various levels
+    payload = {
+        "accounts": [
+            {"email": "user@example.com", "refreshToken": "ya29.secret"},
+        ],
+        "apiKey": "sk-123456789",
+        "settings": {"password": "my_password", "username": "john"},
+    }
+
+    # Convert through tool_result (which redacts before passing to hermes)
+    result_str = tool_result(payload)
+    result_obj = json.loads(result_str)
+
+    # Extract the data from the hermes wrapper
+    if "data" in result_obj:
+        data = result_obj["data"]
+    else:
+        data = result_obj
+
+    # Verify redaction
+    assert data["apiKey"] == "[REDACTED]"
+    assert data["settings"]["password"] == "[REDACTED]"
+    # Email should NOT be redacted (not a secret key)
+    assert data["accounts"][0]["email"] == "user@example.com"
+    # refreshToken should be redacted
+    assert data["accounts"][0]["refreshToken"] == "[REDACTED]"
+
+
 # WI-8a: dryRun lists AC
 def test_wi8a_ac1_delete_checked_dryrun_returns_items():
     """AC: delete_checked with dryRun: true returns checked items with count and dryRun flag, no DELETE."""
