@@ -242,19 +242,34 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
                 f"No valid update fields provided. Rejected fields: {', '.join(rejected)}. "
                 f"Allowed fields: {', '.join(sorted(ALLOWED_UPDATE_FIELDS))}"
             )
-        data = client.patch(f"/api/v2/unified-tasks/{task_id}", filtered)
+        data = client.guarded_write(
+            "PATCH",
+            f"/api/v2/unified-tasks/{task_id}",
+            json=filtered,
+            get_path=f"/api/v2/unified-tasks/{task_id}",
+        )
         if rejected:
             return tool_result({"data": data, "droppedFields": rejected})
         return tool_result(data)
 
     if action == "complete":
         return tool_result(
-            client.post(f"/api/v2/unified-tasks/{task_id}/complete", {})
+            client.guarded_write(
+                "POST",
+                f"/api/v2/unified-tasks/{task_id}/complete",
+                json={},
+                get_path=f"/api/v2/unified-tasks/{task_id}",
+            )
         )
 
     if action == "archive":
         return tool_result(
-            client.post(f"/api/v2/unified-tasks/{task_id}/archive", {})
+            client.guarded_write(
+                "POST",
+                f"/api/v2/unified-tasks/{task_id}/archive",
+                json={},
+                get_path=f"/api/v2/unified-tasks/{task_id}",
+            )
         )
 
     if action == "search":

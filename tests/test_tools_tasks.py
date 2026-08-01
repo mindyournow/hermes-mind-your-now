@@ -124,16 +124,24 @@ def test_each_action_uses_expected_method_and_path(
 
     result = json.loads(build_handler(transport)(**input_data))
 
-    assert observed == [(expected_method, expected_path)]
+    # For update/complete/archive, guarded_write adds a GET before the write
+    if expected_method in ("PATCH", "POST") and "/unified-tasks/" in expected_path:
+        # Guarded write: GET then PATCH/POST
+        assert len(observed) == 2
+        assert observed[0][0] == "GET"
+        assert observed[0][1] == expected_path.replace("/complete", "").replace("/archive", "")
+        assert observed[1] == (expected_method, expected_path)
+    else:
+        assert observed == [(expected_method, expected_path)]
     assert result["success"] is True
 
 
 def test_update_filters_unknown_fields_and_reports_dropped_fields():
-    observed_body = None
+    observed_requests = []
 
     def transport(request):
-        nonlocal observed_body
-        observed_body = json.loads(request.content)
+        if request.method == "PATCH":
+            observed_requests.append(json.loads(request.content))
         return httpx.Response(200, json={"id": TASK_ID, "title": "Allowed"})
 
     handler = build_handler(transport)
@@ -145,7 +153,7 @@ def test_update_filters_unknown_fields_and_reports_dropped_fields():
         )
     )
 
-    assert observed_body == {"title": "Allowed"}
+    assert observed_requests == [{"title": "Allowed"}]
     assert result["data"]["droppedFields"] == ["ownerId"]
     assert "ownerId" not in result["data"]["data"]
 
@@ -189,3 +197,69 @@ def test_create_defaults_to_auto_scheduled():
     )
 
     assert observed_body["isAutoScheduled"] is True
+
+
+def test_update_uses_guarded_write_with_state_hash():
+    """update routes through guarded_write, which sends GET then PATCH with state hash."""
+    requests_log = []
+
+    def transport(request):
+        requests_log.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": TASK_ID, "stateHash": "hash-v1"})
+        return httpx.Response(200, json={"id": TASK_ID, "title": "Updated"})
+
+    handler = build_handler(transport)
+    json.loads(handler(action="update", taskId=TASK_ID, updates={"title": "Updated"}))
+
+    # Should have GET then PATCH
+    assert len(requests_log) >= 2
+    get_req, patch_req = requests_log[0], requests_log[1]
+    assert get_req[0] == "GET"
+    assert f"/unified-tasks/{TASK_ID}" in get_req[1]
+    assert patch_req[0] == "PATCH"
+    assert f"/unified-tasks/{TASK_ID}" in patch_req[1]
+
+
+def test_complete_uses_guarded_write_with_state_hash():
+    """complete routes through guarded_write, which sends GET then POST with state hash."""
+    requests_log = []
+
+    def transport(request):
+        requests_log.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": TASK_ID, "stateHash": "hash-v1"})
+        return httpx.Response(200, json={"id": TASK_ID, "status": "COMPLETED"})
+
+    handler = build_handler(transport)
+    json.loads(handler(action="complete", taskId=TASK_ID))
+
+    # Should have GET then POST
+    assert len(requests_log) >= 2
+    get_req, post_req = requests_log[0], requests_log[1]
+    assert get_req[0] == "GET"
+    assert f"/unified-tasks/{TASK_ID}" in get_req[1]
+    assert post_req[0] == "POST"
+    assert f"/unified-tasks/{TASK_ID}/complete" in post_req[1]
+
+
+def test_archive_uses_guarded_write_with_state_hash():
+    """archive routes through guarded_write, which sends GET then POST with state hash."""
+    requests_log = []
+
+    def transport(request):
+        requests_log.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": TASK_ID, "stateHash": "hash-v1"})
+        return httpx.Response(200, json={"id": TASK_ID, "status": "ARCHIVED"})
+
+    handler = build_handler(transport)
+    json.loads(handler(action="archive", taskId=TASK_ID))
+
+    # Should have GET then POST
+    assert len(requests_log) >= 2
+    get_req, post_req = requests_log[0], requests_log[1]
+    assert get_req[0] == "GET"
+    assert f"/unified-tasks/{TASK_ID}" in get_req[1]
+    assert post_req[0] == "POST"
+    assert f"/unified-tasks/{TASK_ID}/archive" in post_req[1]
