@@ -66,15 +66,6 @@ def build_handler(transport):
             "GET",
             f"/api/project/{PROJECT_ID}",
         ),
-        (
-            {
-                "action": "move_task",
-                "taskId": TASK_ID,
-                "targetProjectId": PROJECT_ID,
-            },
-            "PUT",
-            f"/api/project/{PROJECT_ID}/moveTaskToProject/{TASK_ID}",
-        ),
     ],
 )
 def test_actions_use_expected_methods_and_paths(input_data, method, path):
@@ -101,6 +92,45 @@ def test_actions_use_expected_methods_and_paths(input_data, method, path):
     assert observed == [(method, path)]
     expected_data = {"projects": [payload]} if input_data["action"] == "list" else payload
     assert result == {"success": True, "data": expected_data}
+
+
+def test_move_task_reads_state_hash_before_guarded_put():
+    observed = []
+
+    def transport(request):
+        observed.append(
+            {
+                "method": request.method,
+                "path": request.url.path,
+                "state_hash": request.headers.get("X-MYN-State-Hash"),
+            }
+        )
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": TASK_ID, "stateHash": "task-hash-v1"})
+        return httpx.Response(200, json={"id": TASK_ID, "projectId": PROJECT_ID})
+
+    result = json.loads(build_handler(transport)(
+        action="move_task",
+        taskId=TASK_ID,
+        targetProjectId=PROJECT_ID,
+    ))
+
+    assert observed == [
+        {
+            "method": "GET",
+            "path": f"/api/v2/unified-tasks/{TASK_ID}",
+            "state_hash": None,
+        },
+        {
+            "method": "PUT",
+            "path": f"/api/project/{PROJECT_ID}/moveTaskToProject/{TASK_ID}",
+            "state_hash": "task-hash-v1",
+        },
+    ]
+    assert result == {
+        "success": True,
+        "data": {"id": TASK_ID, "projectId": PROJECT_ID},
+    }
 
 
 def test_schema_exposes_only_supported_actions_and_fields():

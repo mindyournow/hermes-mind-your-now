@@ -56,8 +56,10 @@ def execute_projects(client: MynApiClient, **input_data: Any) -> str:
         if not target_project_id:
             return tool_error("targetProjectId is required for move_task action")
         return tool_result(
-            client.put(
-                f"/api/project/{target_project_id}/moveTaskToProject/{task_id}"
+            client.guarded_write(
+                "PUT",
+                f"/api/project/{target_project_id}/moveTaskToProject/{task_id}",
+                get_path=f"/api/v2/unified-tasks/{task_id}",
             )
         )
 
