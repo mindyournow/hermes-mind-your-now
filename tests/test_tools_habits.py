@@ -91,7 +91,11 @@ def test_reminders_reads_settings_from_unified_task():
         observed.append((request.method, request.url.path))
         return httpx.Response(
             200,
-            json={"reminderEnabled": True, "reminderTime": "09:00"},
+            json={
+                "taskType": "HABIT",
+                "reminderEnabled": True,
+                "reminderTime": "09:00",
+            },
         )
 
     result = json.loads(
@@ -109,6 +113,47 @@ def test_reminders_reads_settings_from_unified_task():
     }
 
 
+@pytest.mark.parametrize("task_type", ["TASK", "CHORE"])
+def test_reminders_read_rejects_non_habit(task_type):
+    observed_methods = []
+
+    def transport(request):
+        observed_methods.append(request.method)
+        return httpx.Response(200, json={"id": HABIT_ID, "taskType": task_type})
+
+    result = json.loads(
+        build_handler(transport)(action="reminders", habitId=HABIT_ID)
+    )
+
+    assert observed_methods == ["GET"]
+    assert result["success"] is False
+    assert "must reference a HABIT" in result["error"]
+
+
+@pytest.mark.parametrize("task_type", ["TASK", "CHORE"])
+def test_reminders_write_rejects_non_habit_before_patch(task_type):
+    observed_methods = []
+
+    def transport(request):
+        observed_methods.append(request.method)
+        return httpx.Response(
+            200,
+            json={"id": HABIT_ID, "taskType": task_type, "stateHash": "hash-v1"},
+        )
+
+    result = json.loads(
+        build_handler(transport)(
+            action="reminders",
+            habitId=HABIT_ID,
+            enableReminders=True,
+        )
+    )
+
+    assert observed_methods == ["GET"]
+    assert result["success"] is False
+    assert "must reference a HABIT" in result["error"]
+
+
 def test_reminders_write_uses_guarded_patch_with_real_field_names():
     observed = []
 
@@ -122,7 +167,10 @@ def test_reminders_write_uses_guarded_patch_with_real_field_names():
             }
         )
         if request.method == "GET":
-            return httpx.Response(200, json={"id": HABIT_ID, "stateHash": "hash-v1"})
+            return httpx.Response(
+                200,
+                json={"id": HABIT_ID, "taskType": "HABIT", "stateHash": "hash-v1"},
+            )
         return httpx.Response(
             200,
             json={
@@ -158,17 +206,26 @@ def test_reminders_write_uses_guarded_patch_with_real_field_names():
     assert result["success"] is True
 
 
-def test_reminders_write_retries_once_with_conflict_state_hash():
+def test_reminders_write_rereads_and_revalidates_after_conflict():
+    observed_methods = []
     observed_hashes = []
+    get_count = 0
 
     def transport(request):
+        nonlocal get_count
+        observed_methods.append(request.method)
         if request.method == "GET":
-            return httpx.Response(200, json={"id": HABIT_ID, "stateHash": "hash-v1"})
+            get_count += 1
+            state_hash = "hash-v1" if get_count == 1 else "hash-v2"
+            return httpx.Response(
+                200,
+                json={"id": HABIT_ID, "taskType": "HABIT", "stateHash": state_hash},
+            )
         observed_hashes.append(request.headers.get("X-MYN-State-Hash"))
         if len(observed_hashes) == 1:
             return httpx.Response(
                 409,
-                json={"error": "stale state", "currentStateHash": "hash-v2"},
+                json={"error": "stale state", "currentStateHash": "unchecked-hash"},
             )
         return httpx.Response(200, json={"id": HABIT_ID, "reminderEnabled": False})
 
@@ -180,8 +237,45 @@ def test_reminders_write_retries_once_with_conflict_state_hash():
         )
     )
 
+    assert observed_methods == ["GET", "PATCH", "GET", "PATCH"]
     assert observed_hashes == ["hash-v1", "hash-v2"]
     assert result["success"] is True
+
+
+def test_reminders_write_rejects_conflict_retry_if_entity_is_no_longer_habit():
+    observed_methods = []
+    get_count = 0
+
+    def transport(request):
+        nonlocal get_count
+        observed_methods.append(request.method)
+        if request.method == "GET":
+            get_count += 1
+            task_type = "HABIT" if get_count == 1 else "CHORE"
+            return httpx.Response(
+                200,
+                json={
+                    "id": HABIT_ID,
+                    "taskType": task_type,
+                    "stateHash": f"hash-v{get_count}",
+                },
+            )
+        return httpx.Response(
+            409,
+            json={"error": "stale state", "currentStateHash": "unchecked-hash"},
+        )
+
+    result = json.loads(
+        build_handler(transport)(
+            action="reminders",
+            habitId=HABIT_ID,
+            enableReminders=False,
+        )
+    )
+
+    assert observed_methods == ["GET", "PATCH", "GET"]
+    assert result["success"] is False
+    assert "must reference a HABIT" in result["error"]
 
 
 @pytest.mark.parametrize("wrapped", [False, True])

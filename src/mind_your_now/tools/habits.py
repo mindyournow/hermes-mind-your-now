@@ -47,6 +47,11 @@ HABITS_SCHEMA = action_schema(
 )
 
 
+def _validate_habit_task(task: Any) -> None:
+    if not isinstance(task, dict) or task.get("taskType") != "HABIT":
+        raise ValueError("habitId must reference a HABIT")
+
+
 def execute_habits(client: MynApiClient, **input_data: Any) -> str:
     action = input_data.get("action")
 
@@ -112,10 +117,12 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
                         f"/api/v2/unified-tasks/{habit_id}",
                         json=updates,
                         get_path=f"/api/v2/unified-tasks/{habit_id}",
+                        validate_current=_validate_habit_task,
                     )
                 )
 
             task = client.get(f"/api/v2/unified-tasks/{habit_id}")
+            _validate_habit_task(task)
             return tool_result(
                 {
                     "habitId": habit_id,
