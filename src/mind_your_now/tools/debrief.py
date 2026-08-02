@@ -73,7 +73,12 @@ def execute_debrief(client: MynApiClient, **input_data: Any) -> str:
         if input_data.get("reason"):
             body["reason"] = input_data["reason"]
         return tool_result(
-            client.post("/api/v2/debrief/corrections/apply", body)
+            client.guarded_write(
+                "POST",
+                "/api/v2/debrief/corrections/apply",
+                json=body,
+                get_path="/api/v2/debrief/current",
+            )
         )
 
     if action == "complete_session":
@@ -82,7 +87,14 @@ def execute_debrief(client: MynApiClient, **input_data: Any) -> str:
             body["summary"] = input_data["sessionSummary"]
         if input_data.get("decisions"):
             body["decisions"] = input_data["decisions"]
-        return tool_result(client.post("/api/v2/debrief/complete", body))
+        return tool_result(
+            client.guarded_write(
+                "POST",
+                "/api/v2/debrief/complete",
+                json=body,
+                get_path="/api/v2/debrief/current",
+            )
+        )
 
     return tool_error(f"Unknown action: {action}")
 

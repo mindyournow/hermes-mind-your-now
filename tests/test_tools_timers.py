@@ -84,7 +84,21 @@ def test_actions_use_expected_methods_and_paths(input_data, method, path):
 
     result = json.loads(build_handler(transport)(**input_data))
 
-    assert observed == [(method, path)]
+    # For cancel/snooze, guarded_write adds a GET before the write
+    if method == "POST" and "cancel" in path:
+        # Guarded write: GET then POST
+        assert len(observed) == 2
+        assert observed[0][0] == "GET"
+        assert f"/timers/" in observed[0][1]
+        assert observed[1] == (method, path)
+    elif method == "POST" and "snooze" in path:
+        # Guarded write: GET then POST
+        assert len(observed) == 2
+        assert observed[0][0] == "GET"
+        assert f"/timers/" in observed[0][1]
+        assert observed[1] == (method, path)
+    else:
+        assert observed == [(method, path)]
     assert result == {"success": True, "data": payload}
 
 
@@ -140,3 +154,47 @@ def test_countdown_converts_minutes_and_pomodoro_defaults():
         "sourceAgentName": "Hermes/hermes-eltmon",
         "sourceChannel": "telegram:eltmon",
     }
+
+
+def test_cancel_uses_guarded_write_with_state_hash():
+    """cancel routes through guarded_write, which sends GET then POST with state hash."""
+    requests_log = []
+
+    def transport(request):
+        requests_log.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"timerId": TIMER_ID, "stateHash": "hash-v1"})
+        return httpx.Response(200, json={"timerId": TIMER_ID, "cancelled": True})
+
+    handler = build_handler(transport)
+    json.loads(handler(action="cancel", timerId=TIMER_ID))
+
+    # Should have GET then POST
+    assert len(requests_log) >= 2
+    get_req, post_req = requests_log[0], requests_log[1]
+    assert get_req[0] == "GET"
+    assert f"/timers/{TIMER_ID}" in get_req[1]
+    assert post_req[0] == "POST"
+    assert f"/timers/{TIMER_ID}/cancel" in post_req[1]
+
+
+def test_snooze_uses_guarded_write_with_state_hash():
+    """snooze routes through guarded_write, which sends GET then POST with state hash."""
+    requests_log = []
+
+    def transport(request):
+        requests_log.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"timerId": TIMER_ID, "stateHash": "hash-v1"})
+        return httpx.Response(200, json={"timerId": TIMER_ID, "snoozedUntil": "2026-08-01T10:00:00Z"})
+
+    handler = build_handler(transport)
+    json.loads(handler(action="snooze", timerId=TIMER_ID, snoozeMinutes=10))
+
+    # Should have GET then POST
+    assert len(requests_log) >= 2
+    get_req, post_req = requests_log[0], requests_log[1]
+    assert get_req[0] == "GET"
+    assert f"/timers/{TIMER_ID}" in get_req[1]
+    assert post_req[0] == "POST"
+    assert f"/timers/{TIMER_ID}/snooze" in post_req[1]

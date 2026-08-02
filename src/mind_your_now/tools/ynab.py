@@ -18,6 +18,7 @@ ACTIONS = [
     "budget_overview",
     "category_balance",
     "list_categories",
+    "list_budgets",
     "account_balances",
     "set_budget_amount",
     "set_category_goal",
@@ -80,9 +81,15 @@ YNAB_SCHEMA = action_schema(
         "accountId": {"type": "string"},
         "payeeName": {"type": "string"},
         "payeeId": {"type": "string"},
+        "query": {"type": "string", "description": "Payee name to search for (alias for payeeName)"},
         "transferToAccount": {"type": "string"},
         "amount": {"type": "number"},
         "date": {"type": "string"},
+        "sinceDate": {
+            "type": "string",
+            "description": "Required start date for list_transactions to bound the upstream query (YYYY-MM-DD)",
+        },
+        "untilDate": {"type": "string", "description": "End date for transaction query, strongly preferred to narrow results (YYYY-MM-DD)"},
         "memo": {"type": "string"},
         "months": {"type": "number"},
         "days": {"type": "number"},
@@ -100,6 +107,11 @@ YNAB_SCHEMA = action_schema(
         "targetGroupName": {"type": "string"},
         "note": {"type": "string"},
         "categoryGroupId": {"type": "string"},
+        "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum matching records to return (client-side truncation)",
+        },
         "splits": {
             "type": "array",
             "items": {
@@ -207,6 +219,7 @@ def execute_ynab(client: MynApiClient, **input_data: Any) -> str:
     direct_gets = {
         "budget_overview": ("/api/v1/ynab/budget/overview", True),
         "list_categories": ("/api/v1/ynab/budget/categories", True),
+        "list_budgets": ("/api/v1/ynab/budget/budgets", True),
         "account_balances": ("/api/v1/ynab/budget/accounts", True),
         "goal_progress": ("/api/v1/ynab/budget/categories", True),
         "budget_months": ("/api/v1/ynab/budget/months", True),
@@ -280,14 +293,17 @@ def execute_ynab(client: MynApiClient, **input_data: Any) -> str:
         )
 
     if action == "search_payees":
-        if input_data.get("payeeName"):
-            return tool_result(
-                client.get(
-                    "/api/v1/ynab/budget/payees/search",
-                    params={"query": input_data["payeeName"]},
-                )
-            )
-        return tool_result(client.get("/api/v1/ynab/budget/payees"))
+        query = input_data.get("payeeName") or input_data.get("query")
+        if not query:
+            return tool_error("payeeName (or query) is required for search_payees action")
+        from mind_your_now.tools import truncate
+        data = client.get(
+            "/api/v1/ynab/budget/payees/search",
+            params={"query": query},
+        )
+        if input_data.get("limit"):
+            data = truncate(data, "payees", int(input_data["limit"]))
+        return tool_result(data)
 
     if action == "create_transaction":
         if not input_data.get("accountId"):
@@ -401,12 +417,27 @@ def execute_ynab(client: MynApiClient, **input_data: Any) -> str:
         )
 
     if action == "list_transactions":
-        params = {"sinceDate": input_data["date"]} if input_data.get("date") else None
-        return tool_result(
-            _convert_milliunits(
-                client.get("/api/v1/ynab/transactions", params=params)
+        since_date = input_data.get("sinceDate") or input_data.get("date")
+        if not since_date:
+            return tool_error(
+                "sinceDate is required for list_transactions so the upstream YNAB read is bounded"
             )
+        params = {"sinceDate": since_date}
+        data = _convert_milliunits(
+            client.get("/api/v1/ynab/transactions", params=params)
         )
+        # Filter by untilDate client-side (API doesn't honor it)
+        until_date = input_data.get("untilDate")
+        if until_date and isinstance(data, dict) and isinstance(data.get("transactions"), list):
+            data["transactions"] = [
+                t for t in data["transactions"]
+                if t.get("date", "") <= until_date
+            ]
+        # Apply limit and truncation
+        from mind_your_now.tools import truncate
+        if input_data.get("limit"):
+            data = truncate(data, "transactions", int(input_data["limit"]))
+        return tool_result(data)
 
     if action == "update_transaction":
         transaction_id = input_data.get("transactionId")

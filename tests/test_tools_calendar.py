@@ -84,7 +84,7 @@ def build_handler(transport):
         (
             {"action": "delete_event", "eventId": EVENT_ID},
             "DELETE",
-            f"/api/v2/calendar/events/{EVENT_ID}",
+            f"/api/v2/calendar/standalone-events/{EVENT_ID}",
             None,
         ),
         (
@@ -224,3 +224,55 @@ def test_meetings_filters_events_without_attendees():
         "events": [{"id": "meeting", "title": "Meeting"}],
         "total": 1,
     }
+
+
+def test_create_and_delete_use_standalone_events():
+    """Verify create and delete both use /standalone-events endpoint."""
+    requests_log = []
+    event_id = "event-123"
+
+    def transport(request):
+        requests_log.append((request.method, request.url.path, request.url.params))
+        if request.method == "POST":
+            return httpx.Response(200, json={"eventId": event_id})
+        elif request.method == "DELETE":
+            return httpx.Response(200, json={"deleted": True})
+        return httpx.Response(200, json={})
+
+    handler = build_handler(transport)
+
+    # Create event
+    json.loads(handler(action="create_event", title="Test", startTime="2026-08-01T10:00:00Z", endTime="2026-08-01T11:00:00Z"))
+
+    # Delete event
+    json.loads(handler(action="delete_event", eventId=event_id))
+
+    # Both should use /standalone-events
+    assert len(requests_log) == 2
+    create_req = requests_log[0]
+    delete_req = requests_log[1]
+
+    # Both should hit standalone-events endpoint
+    assert "standalone-events" in create_req[1]
+    assert "standalone-events" in delete_req[1]
+
+    # Delete should pass calendarId param (create doesn't need it)
+    assert delete_req[2]["calendarId"] == "primary"
+
+
+def test_delete_event_uses_correct_endpoint():
+    """delete_event sends DELETE to /standalone-events not /calendar/events."""
+    requests_log = []
+    event_id = "event-456"
+
+    def transport(request):
+        requests_log.append((request.method, request.url.path))
+        return httpx.Response(200, json={"deleted": True})
+
+    handler = build_handler(transport)
+    handler(action="delete_event", eventId=event_id, calendarId="work-calendar")
+
+    assert len(requests_log) == 1
+    delete_req = requests_log[0]
+    assert delete_req[0] == "DELETE"
+    assert delete_req[1] == f"/api/v2/calendar/standalone-events/{event_id}"
