@@ -84,6 +84,79 @@ def test_actions_use_expected_methods_and_paths(input_data, method, path):
     assert result == {"success": True, "data": payload}
 
 
+def test_reminders_reads_settings_from_unified_task():
+    observed = []
+
+    def transport(request):
+        observed.append((request.method, request.url.path))
+        return httpx.Response(
+            200,
+            json={"reminderEnabled": True, "reminderTime": "09:00"},
+        )
+
+    result = json.loads(
+        build_handler(transport)(action="reminders", habitId=HABIT_ID)
+    )
+
+    assert observed == [("GET", f"/api/v2/unified-tasks/{HABIT_ID}")]
+    assert result == {
+        "success": True,
+        "data": {
+            "habitId": HABIT_ID,
+            "reminderEnabled": True,
+            "reminderTime": "09:00",
+        },
+    }
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_reminders_lists_only_enabled_habits_from_unified_tasks(wrapped):
+    observed = []
+    tasks = [
+        {
+            "id": HABIT_ID,
+            "title": "Morning run",
+            "taskType": "HABIT",
+            "reminderEnabled": True,
+            "reminderTime": "09:00",
+        },
+        {
+            "id": "22222222-2222-4222-8222-222222222222",
+            "title": "Read",
+            "taskType": "HABIT",
+            "reminderEnabled": False,
+            "reminderTime": "20:00",
+        },
+        {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "title": "Water plants",
+            "taskType": "CHORE",
+            "reminderEnabled": True,
+            "reminderTime": "08:00",
+        },
+    ]
+
+    def transport(request):
+        observed.append((request.method, request.url.path, dict(request.url.params)))
+        return httpx.Response(200, json={"tasks": tasks} if wrapped else tasks)
+
+    result = json.loads(build_handler(transport)(action="reminders"))
+
+    assert observed == [("GET", "/api/v2/unified-tasks", {"type": "HABIT"})]
+    assert result == {
+        "success": True,
+        "data": {
+            "reminders": [
+                {
+                    "habitId": HABIT_ID,
+                    "title": "Morning run",
+                    "reminderTime": "09:00",
+                }
+            ]
+        },
+    }
+
+
 def test_streak_history_and_schedule_days_use_params():
     observed = []
 
