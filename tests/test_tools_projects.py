@@ -91,7 +91,7 @@ def test_actions_use_expected_methods_and_paths(input_data, method, path):
     result = json.loads(build_handler(transport)(**input_data))
 
     assert observed == [(method, path)]
-    expected_data = [payload] if input_data["action"] == "list" else payload
+    expected_data = {"projects": [payload]} if input_data["action"] == "list" else payload
     assert result == {"success": True, "data": expected_data}
 
 

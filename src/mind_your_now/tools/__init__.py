@@ -14,10 +14,10 @@ from mind_your_now.client import MynApiError
 
 logger = logging.getLogger(__name__)
 
-# MIN-930: Recursive redaction pattern for secret-shaped keys
-# Matches: accessToken, refreshToken, idToken, accessToken, secret, client_secret, apiKey, password, credential, etc.
+# MIN-930: Recursive redaction pattern for secret-shaped keys.
+# Includes common HTTP/session credential names plus MYN-specific agent keys.
 _SECRET_KEY_PATTERN = re.compile(
-    r"(?i)(access|refresh|id)_?token|secret|client_?secret|api_?key|password|credential"
+    r"(?i)(?:^token$|^authorization$|^cookie$|(?:access|refresh|id|session)_?token|secret|api_?key|password|credential|myn_?inbound_?key|agent_?key)"
 )
 
 
@@ -32,6 +32,124 @@ def _redact_secrets(obj: Any) -> Any:
         return [_redact_secrets(item) for item in obj]
     else:
         return obj
+
+
+def fetch_all_unified_tasks(
+    client: Any,
+    *,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    """Retrieve every stable limit/offset page from the unified-task endpoint.
+
+    The API requires a limit, caps it at 200, and returns a snapshot token that binds
+    later offsets to the first page's collection generation. Results are deduplicated
+    by task ID. Unexpected first-page shapes remain backward compatible.
+    """
+    page_size = 200
+    offset = 0
+    snapshot: str | None = None
+    tasks: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+    seen_page_signatures: set[tuple[str, ...]] = set()
+
+    def page_tasks(data: Any) -> list[dict[str, Any]] | None:
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and isinstance(data.get("tasks"), list):
+            return data["tasks"]
+        return None
+
+    def signature(items: list[dict[str, Any]]) -> tuple[str, ...]:
+        return tuple(
+            str(task.get("id", f"missing-id-{index}"))
+            for index, task in enumerate(items)
+        )
+
+    while True:
+        page_params = {
+            **(params or {}),
+            "limit": page_size,
+            "offset": offset,
+        }
+        if snapshot is not None:
+            page_params["snapshot"] = snapshot
+
+        data = client.get("/api/v2/unified-tasks", params=page_params)
+        current_page = page_tasks(data)
+        if current_page is None:
+            if offset == 0:
+                return data
+            raise RuntimeError("Unified-task pagination returned an unexpected response shape")
+
+        current_signature = signature(current_page)
+        if current_signature in seen_page_signatures:
+            raise RuntimeError("Unified-task pagination did not advance")
+        seen_page_signatures.add(current_signature)
+
+        response_snapshot = data.get("snapshot") if isinstance(data, dict) else None
+        if offset == 0:
+            snapshot = response_snapshot
+        elif snapshot is not None and response_snapshot != snapshot:
+            raise RuntimeError("Unified-task collection changed during pagination")
+
+        for task in current_page:
+            task_id = task.get("id")
+            if task_id is not None:
+                task_key = str(task_id)
+                if task_key in seen_task_ids:
+                    continue
+                seen_task_ids.add(task_key)
+            tasks.append(task)
+
+        has_more = (
+            bool(data.get("hasMore"))
+            if isinstance(data, dict) and "hasMore" in data
+            else len(current_page) == page_size
+        )
+        if not has_more:
+            return tasks
+        if not current_page:
+            raise RuntimeError("Unified-task pagination did not advance")
+        if isinstance(data, dict) and snapshot is None:
+            raise RuntimeError("Unified-task pagination omitted its snapshot token")
+        offset += len(current_page)
+
+
+def truncate(payload: dict[str, Any], key: str, limit: int, *, offset: int = 0) -> dict[str, Any]:
+    """Apply client-side limit/offset to a list in the payload and mark if truncated.
+
+    When the list is cut by limit or offset, sets _truncated: true and _totalCount to
+    the pre-cut length. Silent truncation is worse than none — the markers are mandatory
+    so the model knows it's looking at a slice.
+
+    Args:
+        payload: The response dict containing the list to truncate
+        key: The key in payload whose value is the list to slice
+        limit: Maximum number of items to return
+        offset: Number of items to skip from the start (default 0)
+
+    Returns:
+        The payload with the list sliced and truncation markers added if necessary
+    """
+    items = payload.get(key, [])
+    if not isinstance(items, list):
+        return payload
+
+    total_count = len(items)
+    start = offset
+    end = offset + limit
+    sliced = items[start:end]
+
+    # Only modify if we actually cut something
+    if len(sliced) < total_count:
+        return {
+            **payload,
+            key: sliced,
+            "_truncated": True,
+            "_totalCount": total_count,
+        }
+
+    return payload
 
 
 def tool_result(payload: Any) -> str:
@@ -87,10 +205,17 @@ def register_myn_tool(
     emoji: str,
 ) -> None:
     """Register one guarded handler in the shared MYN toolset."""
+    # Wrap the bare JSON Schema parameters in a complete OpenAI function object
+    # because hermes-agent's registry emits entry.schema verbatim as the function spec.
+    wrapped_schema = {
+        "name": name,
+        "description": description,
+        "parameters": schema,
+    }
     ctx.register_tool(
         name=name,
         toolset="mind-your-now",
-        schema=schema,
+        schema=wrapped_schema,
         handler=guarded(check_fn, handler),
         check_fn=check_fn,
         description=description,

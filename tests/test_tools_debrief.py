@@ -70,7 +70,19 @@ def test_each_action_uses_expected_method_and_path(
 
     result = json.loads(build_handler(transport)(**input_data))
 
-    assert observed == [(expected_method, expected_path)]
+    # For apply_correction/complete_session, guarded_write adds a GET before the write
+    if expected_method == "POST" and "corrections" in expected_path:
+        # Guarded write: GET then POST
+        assert len(observed) == 2
+        assert observed[0] == ("GET", "/api/v2/debrief/current")
+        assert observed[1] == (expected_method, expected_path)
+    elif expected_method == "POST" and "complete" in expected_path:
+        # Guarded write: GET then POST
+        assert len(observed) == 2
+        assert observed[0] == ("GET", "/api/v2/debrief/current")
+        assert observed[1] == (expected_method, expected_path)
+    else:
+        assert observed == [(expected_method, expected_path)]
     assert result == {"success": True, "data": payload}
 
 
@@ -116,3 +128,47 @@ def test_apply_correction_requires_type():
         "success": False,
         "error": "correctionType is required for apply_correction action",
     }
+
+
+def test_apply_correction_uses_guarded_write_with_state_hash():
+    """apply_correction routes through guarded_write, which sends GET then POST with state hash."""
+    requests_log = []
+
+    def transport(request):
+        requests_log.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"stateHash": "hash-v1"})
+        return httpx.Response(200, json={"corrected": True})
+
+    handler = build_handler(transport)
+    json.loads(handler(action="apply_correction", correctionType="tone_adjustment"))
+
+    # Should have GET then POST
+    assert len(requests_log) >= 2
+    get_req, post_req = requests_log[0], requests_log[1]
+    assert get_req[0] == "GET"
+    assert "/debrief/current" in get_req[1]
+    assert post_req[0] == "POST"
+    assert "/debrief/corrections/apply" in post_req[1]
+
+
+def test_complete_session_uses_guarded_write_with_state_hash():
+    """complete_session routes through guarded_write, which sends GET then POST with state hash."""
+    requests_log = []
+
+    def transport(request):
+        requests_log.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"stateHash": "hash-v1"})
+        return httpx.Response(200, json={"completed": True})
+
+    handler = build_handler(transport)
+    json.loads(handler(action="complete_session", sessionSummary="Good progress"))
+
+    # Should have GET then POST
+    assert len(requests_log) >= 2
+    get_req, post_req = requests_log[0], requests_log[1]
+    assert get_req[0] == "GET"
+    assert "/debrief/current" in get_req[1]
+    assert post_req[0] == "POST"
+    assert "/debrief/complete" in post_req[1]

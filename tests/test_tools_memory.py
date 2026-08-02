@@ -159,7 +159,8 @@ def test_recall_sends_limit_and_unwraps_memories_envelope():
     result = json.loads(build_handler(transport)(action="recall", limit=7))
 
     assert observed_params == {"limit": "7"}
-    assert result["data"] == memories
+    assert result["data"]["memories"] == memories
+    assert result["data"]["totalCount"] == 1
 
 
 def test_recall_filters_by_memory_id_after_bounded_fetch():
@@ -188,3 +189,56 @@ def test_recall_filters_by_memory_id_after_bounded_fetch():
 
     assert observed_params == {"limit": "50"}
     assert result["data"] == memory_dto(MEMORY_ID, "Match")
+
+
+def test_recall_by_id_handles_wrapped_response():
+    """Recall by ID reads the memory from the paginated response envelope."""
+    memory_id = "mem-123"
+
+    def transport(request):
+        return httpx.Response(
+            200,
+            json={
+                "memories": [
+                    {"id": memory_id, "content": "Match"},
+                    {"id": "other", "content": "Other"},
+                ],
+                "totalCount": 2,
+            },
+        )
+
+    result = json.loads(build_handler(transport)(action="recall", memoryId=memory_id))
+    assert result["data"] == {"id": memory_id, "content": "Match"}
+
+
+def test_recall_by_id_matches_legacy_memory_id_field():
+    memory_id = "mem-456"
+
+    def transport(request):
+        return httpx.Response(
+            200,
+            json=[
+                {"memoryId": memory_id, "content": "Found"},
+                {"memoryId": "other", "content": "Not this"},
+            ],
+        )
+
+    result = json.loads(build_handler(transport)(action="recall", memoryId=memory_id))
+    assert result["data"] == {"memoryId": memory_id, "content": "Found"}
+
+
+def test_recall_by_id_handles_bare_list():
+    """Recall accepts bare list responses for compatibility."""
+    memory_id = "mem-789"
+
+    def transport(request):
+        return httpx.Response(
+            200,
+            json=[
+                {"id": memory_id, "content": "Match"},
+                {"id": "other", "content": "Other"},
+            ],
+        )
+
+    result = json.loads(build_handler(transport)(action="recall", memoryId=memory_id))
+    assert result["data"] == {"id": memory_id, "content": "Match"}

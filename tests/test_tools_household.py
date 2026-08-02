@@ -92,7 +92,15 @@ def test_actions_use_expected_methods_and_paths(input_data, method, path):
 
     result = json.loads(build_handler(transport)(**input_data))
 
-    assert observed == [(method, path)]
+    # For chore_complete, guarded_write adds a GET before the write
+    if method == "POST" and "chore_complete" in input_data.get("action", ""):
+        # Guarded write: GET then POST
+        assert len(observed) == 2
+        assert observed[0][0] == "GET"
+        assert "/chores/instances/" in observed[0][1]
+        assert observed[1] == (method, path)
+    else:
+        assert observed == [(method, path)]
     assert result == {"success": True, "data": payload}
 
 
@@ -151,3 +159,60 @@ def test_chore_schedule_uses_single_date_or_seven_day_range():
             "endDate": "2026-08-01",
         },
     ]
+
+
+def test_chore_complete_uses_guarded_write_with_state_hash():
+    """chore_complete routes through guarded_write, which sends GET then POST with state hash."""
+    requests_log = []
+    chore_id = "chore-123"
+
+    def transport(request):
+        requests_log.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"choreId": chore_id, "stateHash": "hash-v1"})
+        return httpx.Response(200, json={"choreId": chore_id, "completed": True})
+
+    handler = build_handler(transport)
+    json.loads(handler(action="chore_complete", choreId=chore_id))
+
+    # Should have GET then POST
+    assert len(requests_log) >= 2
+    get_req, post_req = requests_log[0], requests_log[1]
+    assert get_req[0] == "GET"
+    assert f"/chores/instances/{chore_id}" in get_req[1]
+    assert post_req[0] == "POST"
+    assert f"/chores/instances/{chore_id}/complete" in post_req[1]
+
+
+@pytest.mark.xfail(
+    reason="The chore GET /api/v2/chores/instances/{id} endpoint does not return stateHash, "
+    "so chore_complete cannot obtain the value required by @RequireStateHash on the POST endpoint. "
+    "This is a known server limitation tracked by MIN-932. The POST will fail without the header.",
+    strict=True,
+)
+def test_chore_complete_state_hash_unsupported():
+    """chore_complete's state-hash guard fails when GET response lacks stateHash."""
+    chore_id = "chore-with-state"
+
+    def transport(request):
+        # The GET response does not include stateHash - this is the known server gap
+        if request.method == "GET":
+            return httpx.Response(200, json={"choreId": chore_id})
+        # POST endpoint requires X-MYN-State-Hash header via @RequireStateHash
+        # But we have no stateHash to send, so this will be rejected
+        if request.method == "POST":
+            # Verify we're being called - the real server would reject no header
+            if not request.headers.get("X-MYN-State-Hash"):
+                # This is the expected failure: POST without the required header
+                return httpx.Response(400, json={"error": "stateHash header required"})
+            return httpx.Response(200, json={"choreId": chore_id, "completed": True})
+        return httpx.Response(500)
+
+    client = MynApiClient("https://api.example.com", "test-key", transport=httpx.MockTransport(transport))
+    # Let the known 400 escape so pytest records an actual XFAIL. If the server starts
+    # returning stateHash, the write succeeds and strict=True turns the XPASS into a failure.
+    client.guarded_write(
+        "POST",
+        "/api/v2/chores/instances/chore-with-state/complete",
+        get_path="/api/v2/chores/instances/chore-with-state",
+    )

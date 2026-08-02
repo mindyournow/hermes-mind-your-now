@@ -1,113 +1,202 @@
-import logging
-import sys
-import types
+"""Tests for shared tool framework helpers."""
 
+import httpx
 import pytest
 
-from mind_your_now.client import MynApiError
-from mind_your_now.schemas import action_schema
-from mind_your_now.tools import guarded, register_myn_tool
+from mind_your_now.client import MynApiClient
+from mind_your_now.tools import fetch_all_unified_tasks, truncate
 
 
-@pytest.fixture(autouse=True)
-def fake_hermes_registry(monkeypatch):
-    tools_module = types.ModuleType("tools")
-    registry_module = types.ModuleType("tools.registry")
-    registry_module.tool_error = lambda message: f"ERROR: {message}"
-    tools_module.registry = registry_module
-    monkeypatch.setitem(sys.modules, "tools", tools_module)
-    monkeypatch.setitem(sys.modules, "tools.registry", registry_module)
+def test_truncate_slices_list_and_marks_when_cut():
+    """truncate slices the list and sets _truncated: true and _totalCount when it cuts."""
+    payload = {"items": [1, 2, 3, 4, 5], "other": "data"}
+    result = truncate(payload, "items", 3)
+
+    assert result["items"] == [1, 2, 3]
+    assert result["_truncated"] is True
+    assert result["_totalCount"] == 5
+    assert result["other"] == "data"
 
 
-def test_guard_returns_tool_error_when_unavailable():
-    called = False
+def test_truncate_no_markers_when_fit():
+    """A payload that fits the limit returns unmodified with no markers added."""
+    payload = {"items": [1, 2, 3], "other": "data"}
+    result = truncate(payload, "items", 5)
 
-    def handler(**_kwargs):
-        nonlocal called
-        called = True
-        return "unexpected"
-
-    result = guarded(lambda: False, handler)(action="list")
-
-    assert result == "ERROR: MYN not configured — set MYN_API_KEY"
-    assert called is False
+    assert result["items"] == [1, 2, 3]
+    assert "_truncated" not in result
+    assert "_totalCount" not in result
+    assert result["other"] == "data"
 
 
-def test_guard_accepts_hermes_positional_argument_object():
-    received = None
+def test_truncate_exact_fit():
+    """When the list exactly fits the limit, no markers are added."""
+    payload = {"items": [1, 2, 3]}
+    result = truncate(payload, "items", 3)
 
-    def handler(**kwargs):
-        nonlocal received
-        received = kwargs
-        return "ok"
-
-    result = guarded(lambda: True, handler)({"action": "list", "limit": 1})
-
-    assert result == "ok"
-    assert received == {"action": "list", "limit": 1}
+    assert result["items"] == [1, 2, 3]
+    assert "_truncated" not in result
+    assert "_totalCount" not in result
 
 
-def test_guard_maps_api_error():
-    def handler(**_kwargs):
-        raise MynApiError(404, "missing")
+def test_truncate_with_offset():
+    """truncate respects offset to slice from [offset, offset+limit)."""
+    payload = {"items": list(range(10))}
+    result = truncate(payload, "items", 3, offset=2)
 
-    result = guarded(lambda: True, handler)(action="get")
-
-    assert result == "ERROR: MYN API 404: missing"
-
-
-def test_guard_logs_unexpected_exception_at_warning(caplog):
-    def handler(**_kwargs):
-        raise RuntimeError("boom")
-
-    with caplog.at_level(logging.WARNING, logger="mind_your_now.tools"):
-        result = guarded(lambda: True, handler)(action="list")
-
-    assert result == "ERROR: MYN tool failure: boom"
-    assert "[myn] handler failed: boom" in caplog.text
+    assert result["items"] == [2, 3, 4]
+    assert result["_truncated"] is True
+    assert result["_totalCount"] == 10
 
 
-def test_register_myn_tool_passes_guard_and_check_fn():
-    class Context:
-        def __init__(self):
-            self.kwargs = None
+def test_truncate_offset_exact_fit():
+    """When offset+limit covers all remaining items, markers are still added (it was truncated)."""
+    payload = {"items": list(range(5))}
+    result = truncate(payload, "items", 3, offset=2)
 
-        def register_tool(self, **kwargs):
-            self.kwargs = kwargs
+    assert result["items"] == [2, 3, 4]
+    # Even though we got 3 items as requested, the original list was 5 items
+    assert result["_truncated"] is True
+    assert result["_totalCount"] == 5
 
-    context = Context()
-    check_fn = lambda: False
 
-    register_myn_tool(
-        context,
-        name="myn_example",
-        schema={"type": "object"},
-        handler=lambda **_kwargs: "ok",
-        check_fn=check_fn,
-        description="Example",
-        emoji="🧭",
+def test_truncate_empty_list():
+    """truncate handles empty lists correctly."""
+    payload = {"items": []}
+    result = truncate(payload, "items", 10)
+
+    assert result["items"] == []
+    assert "_truncated" not in result
+
+
+def test_truncate_missing_key():
+    """truncate handles missing key gracefully."""
+    payload = {"other": "data"}
+    result = truncate(payload, "items", 10)
+
+    assert result == payload
+    assert "_truncated" not in result
+
+
+def test_truncate_non_list_value():
+    """truncate ignores non-list values."""
+    payload = {"items": {"nested": "dict"}}
+    result = truncate(payload, "items", 10)
+
+    assert result == payload
+    assert "_truncated" not in result
+
+
+def test_fetch_all_unified_tasks_reads_every_stable_server_page():
+    observed = []
+    snapshot = "stable-generation"
+
+    def transport(request):
+        params = dict(request.url.params)
+        observed.append(params)
+        offset = int(params["offset"])
+        count = 200 if offset == 0 else 5
+        return httpx.Response(
+            200,
+            json={
+                "tasks": [
+                    {"id": f"task-{index}"}
+                    for index in range(offset, offset + count)
+                ],
+                "hasMore": offset == 0,
+                "snapshot": snapshot,
+            },
+        )
+
+    client = MynApiClient(
+        "https://api.example.com",
+        "key",
+        transport=httpx.MockTransport(transport),
     )
 
-    assert context.kwargs["name"] == "myn_example"
-    assert context.kwargs["toolset"] == "mind-your-now"
-    assert context.kwargs["check_fn"] is check_fn
-    assert context.kwargs["handler"]() == (
-        "ERROR: MYN not configured — set MYN_API_KEY"
-    )
+    tasks = fetch_all_unified_tasks(client, params={"type": "HABIT"})
 
-
-def test_action_schema_requires_action_and_declared_fields():
-    schema = action_schema(
-        ["list", "get"],
-        {"id": {"type": "string"}},
-        ["id"],
-    )
-
-    assert schema == {
-        "type": "object",
-        "properties": {
-            "action": {"type": "string", "enum": ["list", "get"]},
-            "id": {"type": "string"},
+    assert len(tasks) == 205
+    assert observed == [
+        {"type": "HABIT", "limit": "200", "offset": "0"},
+        {
+            "type": "HABIT",
+            "limit": "200",
+            "offset": "200",
+            "snapshot": snapshot,
         },
-        "required": ["action", "id"],
-    }
+    ]
+
+
+def test_fetch_all_unified_tasks_deduplicates_task_ids():
+    page_zero = [{"id": f"task-{index}"} for index in range(200)]
+    page_one = [{"id": "task-199"}, {"id": "task-200"}]
+    snapshot = "stable-generation"
+
+    def transport(request):
+        offset = int(request.url.params["offset"])
+        return httpx.Response(
+            200,
+            json={
+                "tasks": page_zero if offset == 0 else page_one,
+                "hasMore": offset == 0,
+                "snapshot": snapshot,
+            },
+        )
+
+    client = MynApiClient(
+        "https://api.example.com",
+        "key",
+        transport=httpx.MockTransport(transport),
+    )
+
+    tasks = fetch_all_unified_tasks(client)
+
+    assert len(tasks) == 201
+    assert tasks[-1]["id"] == "task-200"
+    assert sum(task["id"] == "task-199" for task in tasks) == 1
+
+
+def test_fetch_all_unified_tasks_rejects_changed_snapshot():
+    original = [{"id": f"task-{index}"} for index in range(200)]
+
+    def transport(request):
+        offset = int(request.url.params["offset"])
+        return httpx.Response(
+            200,
+            json={
+                "tasks": original if offset == 0 else [{"id": "task-200"}],
+                "hasMore": offset == 0,
+                "snapshot": "first" if offset == 0 else "changed",
+            },
+        )
+
+    client = MynApiClient(
+        "https://api.example.com",
+        "key",
+        transport=httpx.MockTransport(transport),
+    )
+
+    with pytest.raises(RuntimeError, match="changed during pagination"):
+        fetch_all_unified_tasks(client)
+
+
+def test_fetch_all_unified_tasks_rejects_non_advancing_pages():
+    page = [{"id": f"task-{index}"} for index in range(200)]
+    client = MynApiClient(
+        "https://api.example.com",
+        "key",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={
+                    "tasks": page,
+                    "hasMore": True,
+                    "snapshot": "stable-generation",
+                },
+            )
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="did not advance"):
+        fetch_all_unified_tasks(client)

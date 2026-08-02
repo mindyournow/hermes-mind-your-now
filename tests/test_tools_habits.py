@@ -66,18 +66,7 @@ def build_handler(transport):
         (
             {"action": "schedule"},
             "GET",
-            "/api/v2/unified-tasks/schedule",
-        ),
-        ({"action": "reminders"}, "GET", "/api/habits/reminders"),
-        (
-            {"action": "reminders", "habitId": HABIT_ID},
-            "GET",
-            f"/api/habits/reminders/{HABIT_ID}",
-        ),
-        (
-            {"action": "reminders", "habitId": HABIT_ID, "enableReminders": False},
-            "PUT",
-            f"/api/habits/reminders/{HABIT_ID}",
+            "/api/v2/unified-tasks",
         ),
     ],
 )
@@ -100,7 +89,8 @@ def test_streak_history_and_schedule_days_use_params():
 
     def transport(request):
         observed.append((request.url.path, dict(request.url.params)))
-        return httpx.Response(200, json={})
+        response_data = {"tasks": []} if "/api/v2/unified-tasks" in request.url.path else {}
+        return httpx.Response(200, json=response_data)
 
     handler = build_handler(transport)
     handler(action="streaks", habitId=HABIT_ID, includeHistory=True)
@@ -108,24 +98,54 @@ def test_streak_history_and_schedule_days_use_params():
 
     assert observed == [
         (f"/api/v2/unified-tasks/{HABIT_ID}/streak", {"includeHistory": "true"}),
-        ("/api/v2/unified-tasks/schedule", {"days": "14"}),
+        (
+            "/api/v2/unified-tasks",
+            {"type": "HABIT", "days": "14", "limit": "200", "offset": "0"},
+        ),
     ]
 
 
-def test_reminder_update_preserves_false_and_time():
-    observed_body = None
+def test_schedule_lists_habits():
+    """schedule now lists habits instead of calling a schedule endpoint."""
+    observed = []
 
     def transport(request):
-        nonlocal observed_body
-        observed_body = json.loads(request.content)
-        return httpx.Response(200, json={"habitId": HABIT_ID})
+        observed.append(request.url.path)
+        return httpx.Response(200, json={"tasks": [
+            {"id": HABIT_ID, "title": "Morning run", "taskType": "HABIT", "checked": False},
+            {"id": "22222222-2222-4222-8222-222222222222", "title": "Read", "taskType": "HABIT", "checked": True},
+        ]})
 
     handler = build_handler(transport)
-    handler(
-        action="reminders",
-        habitId=HABIT_ID,
-        enableReminders=False,
-        reminderTime="08:30",
-    )
+    result = json.loads(handler(action="schedule"))
 
-    assert observed_body == {"enabled": False, "time": "08:30"}
+    assert observed == ["/api/v2/unified-tasks"]
+    assert result["success"] is True
+    assert len(result["data"]["tasks"]) == 2
+
+
+def test_schedule_honors_limit_beyond_first_server_page():
+    observed_offsets = []
+    snapshot = "stable-generation"
+
+    def transport(request):
+        offset = int(request.url.params["offset"])
+        observed_offsets.append(offset)
+        count = 200 if offset == 0 else 10
+        return httpx.Response(
+            200,
+            json={
+                "tasks": [
+                    {"id": f"habit-{index}", "taskType": "HABIT"}
+                    for index in range(offset, offset + count)
+                ],
+                "hasMore": offset == 0,
+                "snapshot": snapshot,
+            },
+        )
+
+    result = json.loads(build_handler(transport)(action="schedule", limit=205))
+
+    assert observed_offsets == [0, 200]
+    assert len(result["data"]["tasks"]) == 205
+    assert result["data"]["_totalCount"] == 210

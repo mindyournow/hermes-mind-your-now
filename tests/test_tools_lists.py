@@ -46,23 +46,23 @@ def build_handler(transport):
 
 
 @pytest.mark.parametrize(
-    ("input_data", "method", "path"),
+    ("input_data", "methods_paths"),
     [
-        ({"action": "get", "householdId": HOUSEHOLD_ID}, "GET", BASE),
+        (
+            {"action": "get", "householdId": HOUSEHOLD_ID},
+            [("GET", BASE)],
+        ),
         (
             {"action": "add", "householdId": HOUSEHOLD_ID, "item": "Milk"},
-            "POST",
-            BASE,
+            [("POST", BASE)],
         ),
         (
             {"action": "toggle", "householdId": HOUSEHOLD_ID, "itemId": ITEM_ID},
-            "PATCH",
-            f"{BASE}/{ITEM_ID}/toggle",
+            [("GET", BASE), ("PATCH", f"{BASE}/{ITEM_ID}/toggle")],
         ),
         (
             {"action": "bulk_add", "householdId": HOUSEHOLD_ID, "items": ["Milk"]},
-            "POST",
-            f"{BASE}/bulk",
+            [("POST", f"{BASE}/bulk")],
         ),
         (
             {
@@ -71,27 +71,23 @@ def build_handler(transport):
                 "itemId": ITEM_ID,
                 "item": "Oat milk",
             },
-            "PATCH",
-            f"{BASE}/{ITEM_ID}",
+            [("PATCH", f"{BASE}/{ITEM_ID}")],
         ),
         (
             {"action": "delete", "householdId": HOUSEHOLD_ID, "itemId": ITEM_ID},
-            "DELETE",
-            f"{BASE}/{ITEM_ID}",
+            [("DELETE", f"{BASE}/{ITEM_ID}")],
         ),
         (
             {"action": "delete_checked", "householdId": HOUSEHOLD_ID},
-            "DELETE",
-            f"{BASE}/checked",
+            [("DELETE", f"{BASE}/checked")],
         ),
         (
             {"action": "convert_to_tasks", "householdId": HOUSEHOLD_ID},
-            "POST",
-            f"{BASE}/convert-to-tasks",
+            [("POST", f"{BASE}/convert-to-tasks")],
         ),
     ],
 )
-def test_actions_use_expected_methods_and_paths(input_data, method, path):
+def test_actions_use_expected_methods_and_paths(input_data, methods_paths):
     observed = []
     payload = {"marker": input_data["action"]}
 
@@ -101,7 +97,7 @@ def test_actions_use_expected_methods_and_paths(input_data, method, path):
 
     result = json.loads(build_handler(transport)(**input_data))
 
-    assert observed == [(method, path)]
+    assert observed == methods_paths
     assert result == {"success": True, "data": payload}
 
 
@@ -151,3 +147,74 @@ def test_bulk_add_and_convert_preserve_typescript_bodies():
         },
         {"uncheckedOnly": False, "priority": "CRITICAL"},
     ]
+
+
+@pytest.mark.parametrize(
+    ("current_checked", "requested_checked", "patch_expected"),
+    [
+        (False, False, False),
+        (False, True, True),
+        (True, False, True),
+        (True, True, False),
+    ],
+)
+def test_toggle_honors_all_desired_state_combinations(
+    current_checked, requested_checked, patch_expected
+):
+    requests = []
+
+    def transport(request):
+        requests.append((request.method, dict(request.url.params)))
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={"items": [{"id": ITEM_ID, "checked": current_checked}]},
+            )
+        return httpx.Response(200, json={"id": ITEM_ID, "checked": requested_checked})
+
+    result = json.loads(
+        build_handler(transport)(
+            action="toggle",
+            householdId=HOUSEHOLD_ID,
+            itemId=ITEM_ID,
+            checked=requested_checked,
+        )
+    )
+
+    assert requests[0] == ("GET", {"includeChecked": "true"})
+    assert [method for method, _params in requests] == (
+        ["GET", "PATCH"] if patch_expected else ["GET"]
+    )
+    assert result["success"] is True
+
+
+def test_delete_checked_dry_run_requests_and_returns_checked_items():
+    observed_params = None
+
+    def transport(request):
+        nonlocal observed_params
+        observed_params = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {"id": "checked", "checked": True},
+                    {"id": "unchecked", "checked": False},
+                ]
+            },
+        )
+
+    result = json.loads(
+        build_handler(transport)(
+            action="delete_checked",
+            householdId=HOUSEHOLD_ID,
+            dryRun=True,
+        )
+    )
+
+    assert observed_params == {"includeChecked": "true"}
+    assert result["data"] == {
+        "dryRun": True,
+        "items": [{"id": "checked", "checked": True}],
+        "count": 1,
+    }

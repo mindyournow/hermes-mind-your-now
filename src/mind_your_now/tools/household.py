@@ -55,7 +55,12 @@ def execute_household(client: MynApiClient, **input_data: Any) -> str:
         if input_data.get("note"):
             body["note"] = input_data["note"]
         return tool_result(
-            client.post(f"/api/v2/chores/instances/{chore_id}/complete", body)
+            client.guarded_write(
+                "POST",
+                f"/api/v2/chores/instances/{chore_id}/complete",
+                json=body,
+                get_path=f"/api/v2/chores/instances/{chore_id}",
+            )
         )
 
     if action == "invite" and not input_data.get("email"):

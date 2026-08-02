@@ -1,0 +1,90 @@
+# Agent Safety Rules for Mind Your Now Plugin
+
+This document describes the five agent-safety rules enforced by the hermes-mind-your-now plugin to ensure reliable and secure agent interactions with the MYN API.
+
+## Rule 1: Complete Function-Object Schemas
+
+All 14 MYN tools emit complete OpenAI function objects with `name`, `description`, and `parameters` keys. The schema wrapping happens at registration time in `register_myn_tool()`, ensuring Hermes and other Hermes-compatible agents receive fully-formed function schemas that match their dispatch expectations.
+
+**Files:** `src/mind_your_now/tools/__init__.py` (register_myn_tool)
+**Status:** ✓ Implemented across all 14 tools
+
+## Rule 2: Read-Before-Write State-Hash Guards
+
+Writes to the MYN API use the state-hash protocol (MIN-740): read the current state, send the write with an `X-MYN-State-Hash` header, and retry once on 409 conflict using the hash from the error body. This prevents concurrent-write anomalies where a stale value overwrites a fresher one.
+
+Guarded endpoints:
+- Tasks: `update`, `complete`, `archive`
+- Timers: `cancel`, `snooze`
+- Debrief: `apply_correction`, `complete_session`
+- Household: `chore_complete`
+- Calendar: implicit (operations use /standalone-events which gates internally)
+
+**Files:**
+- `src/mind_your_now/client.py` (guarded_write, _write_with_hash, _hash_from_conflict)
+- Test coverage: `tests/test_client.py` (18 tests), per-tool tests in `tests/test_tools_*.py`
+
+**Status:** ✓ Implemented with comprehensive test coverage
+
+## Rule 3: No Advertised-But-Ignored Parameters
+
+Every parameter in a tool's schema must be honored in the handler. No silent dropping of inputs. The planning tool strips ignored scope and constraint parameters, keeping only `action`, `spreadOverDays`, and the implemented `dryRun` candidate preview.
+
+**Files:**
+- `src/mind_your_now/tools/planning.py` (PLANNING_SCHEMA)
+- Module docstring records that scoped planning remains unsupported
+
+**Status:** ✓ Implemented with docstring note
+
+## Rule 4: Honest Dry-Run Capabilities
+
+The list bulk actions `delete_checked` and `convert_to_tasks` support `dryRun: true`; the response includes the affected item set and a count without mutating the list. Planning `schedule_all` and `reschedule` dry-runs resolve customer identity and timezone through the API-key-only, side-effect-free `/api/v1/customers/planning-context` endpoint, exclude tasks merely assigned to the customer, page through the unified-task collection, mirror the controller's customer-local candidate rules, and return a bounded slim preview without invoking a scheduling endpoint.
+
+Caveats:
+- List dry-run is not item-scoped (no `itemIds` filter) — it applies to the full household list.
+- Planning dry-run identifies the full candidate count but returns at most `previewLimit` tasks (default 50, maximum 200) with truncation metadata.
+- Planning engine-selected dates and placements remain unavailable.
+- Unified-task pagination deduplicates IDs and binds later offsets to the first page's snapshot token.
+
+**Files:**
+- `src/mind_your_now/tools/lists.py` (delete_checked, convert_to_tasks)
+- `src/mind_your_now/tools/planning.py` (schedule_all, reschedule candidate previews)
+- Test coverage: `tests/test_ac_verification.py`, `tests/test_tools_planning.py`
+
+**Status:** ✓ Implemented with explicit engine-preview limits
+
+## Rule 5: Redacted Tool Output
+
+All tool output is redacted at the `tool_result()` chokepoint. Secret-shaped keys (`token`, `apikey`, `secret`, `password`, `refreshtoken`, etc., case-insensitive) have their values replaced with `[REDACTED]`, recursively through nested dicts and lists. Non-secret keys (e.g., `email`, `username`) are left intact.
+
+**Files:**
+- `src/mind_your_now/tools/__init__.py` (_redact_secrets, tool_result)
+- Test coverage: `tests/test_ac_verification.py` (test_wi9b_ac1_tool_result_redacts_secrets)
+
+**Status:** ✓ Implemented with comprehensive test
+
+## Cross-Tool Consistency
+
+These rules are applied uniformly across all tools:
+- Calendar events use ISO 8601 `startTime`/`endTime` (not deprecated `startDateTime`)
+- Tasks, projects, memory, and other list operations support client-side `limit` with truncate markers
+- Memory `search` is renamed to `recall_relevant` with `search` as a deprecated alias (semantic recall, not exact match)
+- Deprecated functions and capability gaps are documented in module docstrings
+
+## Dependencies and Blocked Items
+
+The following improvements remain API-bound:
+- Filtered-search capability in memory
+- Scoped planning with per-task/per-date control
+- Item-scoped dryRun for bulk list operations
+- Planning engine-decision preview for dryRun
+
+The habits `reminders` action was removed; restoration is tracked by MIN-934 and cross-references MIN-883.
+
+Project graph scoping is tracked as MIN-933.
+
+## Remaining API-Bound Safety Limits
+
+- The standalone calendar-event delete endpoint has no state-hash or conditional-write contract. The cleanup helper validates the smoke marker twice immediately before deletion, which reduces but cannot eliminate the check-delete race; a server-side conditional delete is required to close it.
+- Desired-state grocery toggles must read the checked-plus-unchecked collection because the API has no single-item read or desired-state write endpoint. Lists are normally small, but the upstream read remains collection-wide.
+- Small task and habit requests may still read every stable task page so client-side filters, offsets, and exact truncation counts remain correct.
