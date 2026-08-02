@@ -37,6 +37,8 @@ EXPECTED_ALLOWED_UPDATE_FIELDS = {
     "assignedTo",
     "scheduledAt",
     "dueDate",
+    "reminderEnabled",
+    "reminderTime",
 }
 
 
@@ -158,6 +160,28 @@ def test_update_filters_unknown_fields_and_reports_dropped_fields():
     assert "ownerId" not in result["data"]["data"]
 
 
+def test_update_accepts_reminder_fields_verbatim():
+    observed_body = None
+
+    def transport(request):
+        nonlocal observed_body
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": TASK_ID, "stateHash": "hash-v1"})
+        observed_body = json.loads(request.content)
+        return httpx.Response(200, json={"id": TASK_ID, **observed_body})
+
+    result = json.loads(
+        build_handler(transport)(
+            action="update",
+            taskId=TASK_ID,
+            updates={"reminderEnabled": True, "reminderTime": "09:00"},
+        )
+    )
+
+    assert observed_body == {"reminderEnabled": True, "reminderTime": "09:00"}
+    assert result["success"] is True
+
+
 def test_update_reports_dropped_fields_when_none_are_allowed():
     handler = build_handler(
         lambda _request: pytest.fail("request must not be sent")
@@ -173,6 +197,8 @@ def test_update_reports_dropped_fields_when_none_are_allowed():
 
     assert result["success"] is False
     assert "ownerId, householdId" in result["error"]
+    assert "reminderEnabled" in result["error"]
+    assert "reminderTime" in result["error"]
 
 
 def test_allowed_update_fields_match_typescript_source():
