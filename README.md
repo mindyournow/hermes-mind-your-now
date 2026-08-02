@@ -88,10 +88,12 @@ All tools use the Hermes toolset `mind-your-now`.
 | `myn_memory` | `remember`, `recall`, `forget`, `search` |
 | `myn_profile` | `get_info`, `get_goals`, `update_goals`, `preferences` |
 | `myn_household` | `members`, `invite`, `chores`, `chore_schedule`, `chore_complete` |
-| `myn_projects` | `list`, `get`, `create`, `move_task` |
+| `myn_projects` | `list`, `get`, `move_task` |
 | `myn_planning` | `plan`, `schedule_all`, `reschedule` (live actions are user-wide mutations; `schedule_all` and `reschedule` support read-only `dryRun` candidate previews) |
 | `myn_a2a_pairing` | `pair`, `status`, `unpair`, `redeem_invite`, `ping`, `send_message`, `get_agent_card` |
 | `myn_ynab` | Budget, transaction, scheduled-transaction, analytics, connection, split, and category-management actions matching `@mind-your-now/myn` |
+
+**Collections, not projects:** MYN has twelve fixed collections that cannot be created or deleted. Use `myn_projects.move_task` to re-file a task; real user-named projects are planned separately.
 
 Timers created through `myn_timers` include `sourceAgentName` and `sourceChannel`, so MYN can attribute reminders to the Hermes agent that created them.
 
