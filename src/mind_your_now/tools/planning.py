@@ -4,7 +4,7 @@
 read-shaped API surfaces. The model MUST ask the user for permission before a live call.
 
 schedule_all and reschedule support a read-only dryRun that returns the candidate task set.
-The planning engine's resulting dates and placements cannot currently be previewed.
+The planning engine's resulting dates and placements cannot be previewed until MIN-932.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from mind_your_now.client import MynApiClient
 from mind_your_now.schemas import action_schema
 from mind_your_now.tools import (
+    UnifiedTaskScan,
     fetch_all_unified_tasks,
     register_myn_tool,
     tool_error,
@@ -187,12 +188,12 @@ def _dry_run_preview(
     customer_id, zone = _planning_context(client)
     now = _now_in_zone(zone)
     data = fetch_all_unified_tasks(client)
-    if not isinstance(data, list):
+    if not isinstance(data, UnifiedTaskScan):
         return tool_error("Unable to read the task collection for planning dryRun")
 
     owned_tasks = [
         task
-        for task in data
+        for task in data.tasks
         if task.get("ownerId") is not None
         and str(task["ownerId"]) == customer_id
     ]
@@ -218,15 +219,20 @@ def _dry_run_preview(
         "count": candidate_count,
         "customerTimeZone": str(zone),
         "engineDecisionsPreviewed": False,
+        "collectionComplete": data.complete,
+        "scannedTaskCount": data.scanned_items,
         "message": (
             "Read-only candidate task preview in the customer's configured timezone. "
             "Only tasks owned by the customer are included, matching live planning. "
             "The planning engine's resulting dates and placements cannot be previewed. "
-            "Multi-page reads are deduplicated and bound to the "
-            "first page's task-list snapshot token."
+            "Multi-page reads are deduplicated, snapshot-bound, and capped at "
+            "50 pages or 10,000 tasks."
         ),
     }
-    if len(tasks) < candidate_count:
+    if not data.complete:
+        payload["_truncated"] = True
+        payload["countIsLowerBound"] = True
+    elif len(tasks) < candidate_count:
         payload["_truncated"] = True
         payload["_totalCount"] = candidate_count
     return tool_result(payload)

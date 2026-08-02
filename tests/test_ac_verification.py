@@ -81,12 +81,12 @@ def test_wi5_ac2_search_remains_deprecated_alias():
     assert "recall_relevant" in description.lower()
 
 
-def test_wi5_ac3_module_docstring_records_filtered_search_gap():
-    """AC: Module docstring records the server-side filtered-search gap."""
+def test_wi5_ac3_module_docstring_records_min932_gap():
+    """AC: Module docstring records filtered-search gap as MIN-932 dependency."""
     from mind_your_now.tools import memory
 
-    assert "filtered search" in memory.__doc__.lower()
-    assert "server-side" in memory.__doc__.lower()
+    assert "MIN-932" in memory.__doc__
+    assert "filtered" in memory.__doc__.lower() or "search" in memory.__doc__.lower()
 
 
 # WI-6a: search_payees bounded AC
@@ -258,11 +258,11 @@ def test_wi7a_ac2_description_warns_about_user_wide_scope():
     assert "mutate" in description.lower() or "permission" in description.lower()
 
 
-def test_wi7a_ac3_module_docstring_records_preview_limit():
-    """AC: Module docstring records the planning-engine preview limitation."""
+def test_wi7a_ac3_module_docstring_records_min932_dependency():
+    """AC: Module docstring records scoped planning as MIN-932 dependency."""
     from mind_your_now.tools import planning
 
-    assert "cannot currently be previewed" in planning.__doc__
+    assert "MIN-932" in planning.__doc__
 
 
 # WI-7b: lists toggle AC
@@ -368,11 +368,11 @@ def test_wi7d_ac1_reminders_action_removed_from_schema():
     assert "schedule" in actions
 
 
-def test_wi7d_ac2_module_docstring_records_reminder_follow_ups():
-    """AC: Module docstring records the reminder restoration follow-ups."""
+def test_wi7d_ac2_module_docstring_records_min932_blocking():
+    """AC: Module docstring records restoration blocked on MIN-932 and MIN-883."""
     from mind_your_now.tools import habits
 
-    assert "MIN-934" in habits.__doc__
+    assert "MIN-932" in habits.__doc__
     assert "MIN-883" in habits.__doc__
 
 

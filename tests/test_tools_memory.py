@@ -187,7 +187,41 @@ def test_recall_filters_by_memory_id_after_bounded_fetch():
         build_handler(transport)(action="recall", memoryId=MEMORY_ID)
     )
 
-    assert observed_params == {"limit": "50"}
+    assert observed_params == {"limit": "200", "offset": "0"}
+    assert result["data"] == memory_dto(MEMORY_ID, "Match")
+
+
+def test_recall_by_id_scans_later_pages_ignoring_list_limit():
+    observed_params = []
+
+    def transport(request):
+        params = dict(request.url.params)
+        observed_params.append(params)
+        offset = int(params["offset"])
+        return httpx.Response(
+            200,
+            json={
+                "memories": [
+                    memory_dto(
+                        "other" if offset == 0 else MEMORY_ID,
+                        "Other" if offset == 0 else "Match",
+                    )
+                ],
+                "totalCount": 2,
+                "limit": 200,
+                "offset": offset,
+                "hasMore": offset == 0,
+            },
+        )
+
+    result = json.loads(
+        build_handler(transport)(action="recall", memoryId=MEMORY_ID, limit=1)
+    )
+
+    assert observed_params == [
+        {"limit": "200", "offset": "0"},
+        {"limit": "200", "offset": "1"},
+    ]
     assert result["data"] == memory_dto(MEMORY_ID, "Match")
 
 

@@ -160,6 +160,35 @@ def test_list_sends_limit_and_unwraps_tasks_envelope():
     assert result["data"] == {"tasks": tasks}
 
 
+def test_list_limit_stops_after_first_sufficient_server_page():
+    requests = 0
+
+    def transport(_request):
+        nonlocal requests
+        requests += 1
+        return httpx.Response(
+            200,
+            json={
+                "tasks": [
+                    {"id": f"task-{index}", "priority": "CRITICAL"}
+                    for index in range(200)
+                ],
+                "hasMore": True,
+                "snapshot": "stable-generation",
+            },
+        )
+
+    result = json.loads(
+        build_handler(transport)(action="list", priority="CRITICAL", limit=20)
+    )
+
+    assert requests == 1
+    assert len(result["data"]["tasks"]) == 20
+    assert result["data"]["_truncated"] is True
+    assert result["data"]["_collectionComplete"] is False
+    assert "_totalCount" not in result["data"]
+
+
 def test_update_filters_unknown_fields_and_reports_dropped_fields():
     observed_requests = []
 

@@ -1,6 +1,6 @@
 """myn_habits: habit tracking, streaks, chains, and schedules.
 
-The reminders action was removed as 404-by-construction. Restoration is tracked by MIN-934
+The reminders action was removed as 404-by-construction. Restoration is blocked on MIN-932
 and cross-references MIN-883.
 """
 
@@ -12,6 +12,7 @@ from typing import Any
 from mind_your_now.client import MynApiClient
 from mind_your_now.schemas import action_schema
 from mind_your_now.tools import (
+    UnifiedTaskScan,
     fetch_all_unified_tasks,
     register_myn_tool,
     tool_error,
@@ -82,13 +83,21 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
         params = {"type": "HABIT"}
         if input_data.get("dateRange") is not None:
             params["days"] = input_data["dateRange"]
-        data = fetch_all_unified_tasks(client, params=params)
-        if not isinstance(data, list):
+        data = fetch_all_unified_tasks(
+            client,
+            params=params,
+            match_fn=lambda task: task.get("taskType") == "HABIT",
+            stop_after=limit,
+        )
+        if not isinstance(data, UnifiedTaskScan):
             return tool_result(data)
 
-        # Defensively filter because older servers may ignore the type parameter.
-        habits = [task for task in data if task.get("taskType") == "HABIT"]
-        return tool_result(truncate({"tasks": habits}, "tasks", limit))
+        result = truncate({"tasks": data.tasks}, "tasks", limit)
+        if not data.complete:
+            result.pop("_totalCount", None)
+            result["_truncated"] = True
+            result["_collectionComplete"] = False
+        return tool_result(result)
 
     return tool_error(f"Unknown action: {action}")
 
@@ -106,7 +115,7 @@ def register_habits_tool(
         check_fn=check_fn,
         description=(
             "Track habits and streaks. Actions: streaks, skip, chains, schedule. "
-            "Reminders are not supported (see MIN-934 and MIN-883)."
+            "Reminders are not supported (see MIN-932 and MIN-883)."
         ),
         emoji="🔁",
     )

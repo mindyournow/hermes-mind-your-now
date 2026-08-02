@@ -11,6 +11,7 @@ from typing import Any
 from mind_your_now.client import MynApiClient
 from mind_your_now.schemas import action_schema
 from mind_your_now.tools import (
+    UnifiedTaskScan,
     fetch_all_unified_tasks,
     register_myn_tool,
     tool_error,
@@ -231,27 +232,29 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
             )
             if input_data.get(key) is not None
         }
-        data = fetch_all_unified_tasks(client, params=params)
-        if not isinstance(data, list):
-            return tool_result(data)
-        tasks = data
-
-        # The API currently ignores some filters, so enforce them in one client-side pass.
-        tasks = [
-            task
-            for task in tasks
-            if (not input_data.get("status") or task.get("status") == input_data["status"])
-            and (not input_data.get("priority") or task.get("priority") == input_data["priority"])
-            and (not input_data.get("projectId") or task.get("projectId") == input_data["projectId"])
-            and (
-                range_start is None and range_end is None
-                or _overlaps_date_range(task, range_start, range_end)
+        def matches_filters(task: dict[str, Any]) -> bool:
+            return (
+                (not input_data.get("status") or task.get("status") == input_data["status"])
+                and (not input_data.get("priority") or task.get("priority") == input_data["priority"])
+                and (not input_data.get("projectId") or task.get("projectId") == input_data["projectId"])
+                and (
+                    range_start is None and range_end is None
+                    or _overlaps_date_range(task, range_start, range_end)
+                )
             )
-        ]
+
+        data = fetch_all_unified_tasks(
+            client,
+            params=params,
+            match_fn=matches_filters,
+            stop_after=offset + limit,
+        )
+        if not isinstance(data, UnifiedTaskScan):
+            return tool_result(data)
 
         # Slim the tasks - remove nested schedules, calendar events, household graphs.
         slimmed = []
-        for task in tasks:
+        for task in data.tasks:
             slim_task = {
                 k: v for k, v in task.items()
                 if k not in {"schedules", "calendarEvents", "householdGraphs", "nested"}
@@ -259,6 +262,10 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
             slimmed.append(slim_task)
 
         result = truncate({"tasks": slimmed}, "tasks", limit, offset=offset)
+        if not data.complete:
+            result.pop("_totalCount", None)
+            result["_truncated"] = True
+            result["_collectionComplete"] = False
         return tool_result(result)
 
     if action in {"get", "update", "complete", "archive"}:

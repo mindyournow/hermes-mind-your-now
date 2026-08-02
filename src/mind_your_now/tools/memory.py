@@ -4,8 +4,8 @@ The search action has been renamed to recall_relevant and returns semantic
 matches, not exact matches. The search action remains callable as a deprecated
 alias for one release.
 
-Filtered search (exact keyword match) remains unavailable until the search
-endpoint is implemented server-side.
+Filtered search (exact keyword match) is blocked by MIN-932 and will be added
+in a follow-up when the search endpoint is implemented server-side.
 """
 
 from __future__ import annotations
@@ -19,6 +19,50 @@ from mind_your_now.tools import register_myn_tool, tool_error, tool_result
 
 
 MEMORY_FETCH_LIMIT = 50
+MEMORY_LOOKUP_PAGE_SIZE = 200
+MEMORY_LOOKUP_MAX_PAGES = 50
+
+
+def _memory_items(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, dict) and isinstance(data.get("memories"), list):
+        return data["memories"]
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _find_memory_by_id(
+    client: MynApiClient,
+    memory_id: str,
+) -> tuple[dict[str, Any] | None, bool]:
+    offset = 0
+    for _page in range(MEMORY_LOOKUP_MAX_PAGES):
+        data = client.get(
+            "/api/v1/customers/memories",
+            params={"limit": MEMORY_LOOKUP_PAGE_SIZE, "offset": offset},
+        )
+        memories = _memory_items(data)
+        match = next(
+            (
+                memory
+                for memory in memories
+                if (memory.get("id") or memory.get("memoryId")) == memory_id
+            ),
+            None,
+        )
+        if match is not None:
+            return match, True
+
+        has_more = bool(data.get("hasMore")) if isinstance(data, dict) else False
+        if not has_more:
+            return None, True
+        if not memories:
+            return None, False
+        offset += len(memories)
+
+    return None, False
+
+
 MEMORY_SCHEMA = action_schema(
     ["remember", "recall", "forget", "recall_relevant", "search"],
     {
@@ -57,31 +101,23 @@ def execute_memory(client: MynApiClient, **input_data: Any) -> str:
         return tool_result(client.post("/api/v1/agent/memories", body))
 
     if action == "recall":
+        memory_id = input_data.get("memoryId")
+        if memory_id:
+            match, complete = _find_memory_by_id(client, memory_id)
+            if match is not None:
+                return tool_result(match)
+            if not complete:
+                return tool_error(
+                    "Memory lookup reached its 50-page safety cap before completion"
+                )
+            return tool_error(f"Memory not found: {memory_id}")
+
         limit = input_data.get("limit")
         data = client.get(
             "/api/v1/customers/memories",
             params={"limit": MEMORY_FETCH_LIMIT if limit is None else limit},
         )
-        if isinstance(data, dict) and isinstance(data.get("memories"), list):
-            memories = data["memories"]
-        elif isinstance(data, list):
-            memories = data
-        else:
-            memories = []
-
-        memory_id = input_data.get("memoryId")
-        if memory_id:
-            match = next(
-                (
-                    memory
-                    for memory in memories
-                    if (memory.get("id") or memory.get("memoryId")) == memory_id
-                ),
-                None,
-            )
-            if not match:
-                return tool_error(f"Memory not found: {memory_id}")
-            return tool_result(match)
+        memories = _memory_items(data)
 
         # Preserve main's transparent client-side truncation markers.
         from mind_your_now.tools import truncate

@@ -32,7 +32,7 @@ Every parameter in a tool's schema must be honored in the handler. No silent dro
 
 **Files:**
 - `src/mind_your_now/tools/planning.py` (PLANNING_SCHEMA)
-- Module docstring records that scoped planning remains unsupported
+- Module docstring records that scoped planning is blocked on MIN-932
 
 **Status:** ✓ Implemented with docstring note
 
@@ -41,10 +41,10 @@ Every parameter in a tool's schema must be honored in the handler. No silent dro
 The list bulk actions `delete_checked` and `convert_to_tasks` support `dryRun: true`; the response includes the affected item set and a count without mutating the list. Planning `schedule_all` and `reschedule` dry-runs resolve customer identity and timezone through the API-key-only, side-effect-free `/api/v1/customers/planning-context` endpoint, exclude tasks merely assigned to the customer, page through the unified-task collection, mirror the controller's customer-local candidate rules, and return a bounded slim preview without invoking a scheduling endpoint.
 
 Caveats:
-- List dry-run is not item-scoped (no `itemIds` filter) — it applies to the full household list.
-- Planning dry-run identifies the full candidate count but returns at most `previewLimit` tasks (default 50, maximum 200) with truncation metadata.
-- Planning engine-selected dates and placements remain unavailable.
-- Unified-task pagination deduplicates IDs and binds later offsets to the first page's snapshot token.
+- List dry-run is not item-scoped (no `itemIds` filter) — it applies to the full household list. Item scoping is tracked as MIN-932.
+- Planning dry-run returns at most `previewLimit` tasks (default 50, maximum 200). Complete scans report the full candidate count; safety-capped scans mark the count as a lower bound.
+- Planning engine-selected dates and placements remain unavailable until MIN-932.
+- Unified-task pagination deduplicates IDs, binds later offsets to the first page's snapshot token, stops after enough matches, and has a hard 50-page/10,000-task ceiling.
 
 **Files:**
 - `src/mind_your_now/tools/lists.py` (delete_checked, convert_to_tasks)
@@ -69,17 +69,17 @@ These rules are applied uniformly across all tools:
 - Calendar events use ISO 8601 `startTime`/`endTime` (not deprecated `startDateTime`)
 - Tasks, projects, memory, and other list operations support client-side `limit` with truncate markers
 - Memory `search` is renamed to `recall_relevant` with `search` as a deprecated alias (semantic recall, not exact match)
-- Deprecated functions and capability gaps are documented in module docstrings
+- Deprecated functions are documented in module docstrings with tracking issue references (MIN-932, MIN-933)
 
 ## Dependencies and Blocked Items
 
-The following improvements remain API-bound:
-- Filtered-search capability in memory
+The following improvements are blocked by MIN-932 (scoped planning and search):
+- Filtered-search capability in memory (`min-932` item 2)
 - Scoped planning with per-task/per-date control
 - Item-scoped dryRun for bulk list operations
 - Planning engine-decision preview for dryRun
 
-The habits `reminders` action was removed; restoration is tracked by MIN-934 and cross-references MIN-883.
+The habits `reminders` action was removed; restoration is blocked on MIN-932 and cross-references MIN-883.
 
 Project graph scoping is tracked as MIN-933.
 
@@ -87,4 +87,4 @@ Project graph scoping is tracked as MIN-933.
 
 - The standalone calendar-event delete endpoint has no state-hash or conditional-write contract. The cleanup helper validates the smoke marker twice immediately before deletion, which reduces but cannot eliminate the check-delete race; a server-side conditional delete is required to close it.
 - Desired-state grocery toggles must read the checked-plus-unchecked collection because the API has no single-item read or desired-state write endpoint. Lists are normally small, but the upstream read remains collection-wide.
-- Small task and habit requests may still read every stable task page so client-side filters, offsets, and exact truncation counts remain correct.
+- Task and habit reads may scan multiple stable pages for client-side filters, but caller-aware stopping and the hard scan ceiling bound request latency and memory.
