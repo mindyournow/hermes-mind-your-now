@@ -75,12 +75,24 @@ def test_actions_use_expected_methods_and_paths(input_data, method, path):
 
     def transport(request):
         observed.append((request.method, request.url.path))
-        return httpx.Response(200, json=payload)
+        response = (
+            {
+                "projects": [payload],
+                "total": 1,
+                "limit": 50,
+                "offset": 0,
+                "hasMore": False,
+            }
+            if input_data["action"] == "list"
+            else payload
+        )
+        return httpx.Response(200, json=response)
 
     result = json.loads(build_handler(transport)(**input_data))
 
     assert observed == [(method, path)]
-    assert result == {"success": True, "data": payload}
+    expected_data = {"projects": [payload]} if input_data["action"] == "list" else payload
+    assert result == {"success": True, "data": expected_data}
 
 
 def test_list_uses_encoded_flags_and_create_maps_parent_id():
@@ -108,7 +120,11 @@ def test_list_uses_encoded_flags_and_create_maps_parent_id():
     assert observed == [
         {
             "path": "/api/project/defaults",
-            "params": {"includeArchived": "true", "includeStats": "true"},
+            "params": {
+                "limit": "50",
+                "includeArchived": "true",
+                "includeStats": "true",
+            },
             "body": None,
         },
         {

@@ -36,14 +36,14 @@ def execute_projects(client: MynApiClient, **input_data: Any) -> str:
     action = input_data.get("action")
 
     if action == "list":
-        params = {}
+        params = {"limit": 50}
         if input_data.get("includeArchived"):
             params["includeArchived"] = "true"
         if input_data.get("includeStats"):
             params["includeStats"] = "true"
         data = client.get("/api/project/defaults", params=params)
 
-        # Normalize bare array or wrapped response
+        # Normalize bare array or wrapped response.
         if isinstance(data, list):
             projects = data
         elif isinstance(data, dict) and isinstance(data.get("projects"), list):
@@ -51,7 +51,7 @@ def execute_projects(client: MynApiClient, **input_data: Any) -> str:
         else:
             return tool_result(data)
 
-        # Slim output - remove nested owner/account graphs
+        # Slim output - remove nested owner/account graphs.
         slimmed = []
         for project in projects:
             slim_project = {
@@ -60,7 +60,7 @@ def execute_projects(client: MynApiClient, **input_data: Any) -> str:
             }
             slimmed.append(slim_project)
 
-        # Apply truncate if limit specified
+        # Preserve the client-side truncation markers introduced on main.
         from mind_your_now.tools import truncate
         result = {"projects": slimmed}
         if input_data.get("limit"):

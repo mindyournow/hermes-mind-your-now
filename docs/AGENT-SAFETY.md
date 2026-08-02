@@ -6,7 +6,7 @@ This document describes the five agent-safety rules enforced by the hermes-mind-
 
 All 14 MYN tools emit complete OpenAI function objects with `name`, `description`, and `parameters` keys. The schema wrapping happens at registration time in `register_myn_tool()`, ensuring Hermes and other Hermes-compatible agents receive fully-formed function schemas that match their dispatch expectations.
 
-**Files:** `src/mind_your_now/tools/__init__.py` (register_myn_tool)  
+**Files:** `src/mind_your_now/tools/__init__.py` (register_myn_tool)
 **Status:** ✓ Implemented across all 14 tools
 
 ## Rule 2: Read-Before-Write State-Hash Guards
@@ -42,9 +42,9 @@ The list bulk actions `delete_checked` and `convert_to_tasks` support `dryRun: t
 
 Caveats:
 - List dry-run is not item-scoped (no `itemIds` filter) — it applies to the full household list. Item scoping is tracked as MIN-932.
-- Planning dry-run identifies the full candidate count but returns at most `previewLimit` tasks (default 50, maximum 200) with truncation metadata.
+- Planning dry-run returns at most `previewLimit` tasks (default 50, maximum 200). Complete scans report the full candidate count; safety-capped scans mark the count as a lower bound.
 - Planning engine-selected dates and placements remain unavailable until MIN-932.
-- Unified-task pagination deduplicates IDs and rechecks the first page, but the API has no snapshot token; concurrent changes confined to later pages can still make counts best-effort.
+- Unified-task pagination deduplicates IDs, binds later offsets to the first page's snapshot token, stops after enough matches, and has a hard 50-page/10,000-task ceiling.
 
 **Files:**
 - `src/mind_your_now/tools/lists.py` (delete_checked, convert_to_tasks)
@@ -87,4 +87,4 @@ Project graph scoping is tracked as MIN-933.
 
 - The standalone calendar-event delete endpoint has no state-hash or conditional-write contract. The cleanup helper validates the smoke marker twice immediately before deletion, which reduces but cannot eliminate the check-delete race; a server-side conditional delete is required to close it.
 - Desired-state grocery toggles must read the checked-plus-unchecked collection because the API has no single-item read or desired-state write endpoint. Lists are normally small, but the upstream read remains collection-wide.
-- Small task and habit requests may still read every sequential task page so unsupported client-side filters, offsets, and exact truncation counts remain correct until MIN-932 adds reliable server-side filtering and pagination.
+- Task and habit reads may scan multiple stable pages for client-side filters, but caller-aware stopping and the hard scan ceiling bound request latency and memory.

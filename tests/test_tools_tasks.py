@@ -136,6 +136,63 @@ def test_each_action_uses_expected_method_and_path(
     assert result["success"] is True
 
 
+def test_list_sends_limit_and_unwraps_tasks_envelope():
+    observed_params = None
+    tasks = [{"id": TASK_ID, "title": "Plan week"}]
+
+    def transport(request):
+        nonlocal observed_params
+        observed_params = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={
+                "tasks": tasks,
+                "total": 1,
+                "limit": 7,
+                "offset": 0,
+                "hasMore": False,
+            },
+        )
+
+    result = json.loads(build_handler(transport)(action="list", limit=7))
+
+    assert observed_params == {
+        "detail": "full",
+        "limit": "200",
+        "offset": "0",
+    }
+    assert result["data"] == {"tasks": tasks}
+
+
+def test_list_limit_stops_after_first_sufficient_server_page():
+    requests = 0
+
+    def transport(_request):
+        nonlocal requests
+        requests += 1
+        return httpx.Response(
+            200,
+            json={
+                "tasks": [
+                    {"id": f"task-{index}", "priority": "CRITICAL"}
+                    for index in range(200)
+                ],
+                "hasMore": True,
+                "snapshot": "stable-generation",
+            },
+        )
+
+    result = json.loads(
+        build_handler(transport)(action="list", priority="CRITICAL", limit=20)
+    )
+
+    assert requests == 1
+    assert len(result["data"]["tasks"]) == 20
+    assert result["data"]["_truncated"] is True
+    assert result["data"]["_collectionComplete"] is False
+    assert "_totalCount" not in result["data"]
+
+
 def test_update_filters_unknown_fields_and_reports_dropped_fields():
     observed_requests = []
 
@@ -292,7 +349,12 @@ def test_list_date_filters_use_inclusive_task_interval_overlap(filters, expected
 
     result = json.loads(build_handler(transport)(action="list", **filters))
 
-    assert observed_params == {**filters, "page": "0", "size": "200"}
+    assert observed_params == {
+        **filters,
+        "detail": "full",
+        "limit": "200",
+        "offset": "0",
+    }
     assert [task["id"] for task in result["data"]["tasks"]] == expected_ids
 
 
@@ -318,13 +380,13 @@ def test_list_date_filter_excludes_undated_tasks_but_keeps_single_date_tasks():
 
 
 def test_list_filters_and_offsets_across_all_server_pages():
-    observed_pages = []
+    observed_requests = []
+    snapshot = "stable-generation"
 
     def transport(request):
-        page = int(request.url.params["page"])
-        observed_pages.append(page)
-        start = page * 200
-        count = 200 if page == 0 else 50
+        server_offset = int(request.url.params["offset"])
+        observed_requests.append(dict(request.url.params))
+        count = 200 if server_offset == 0 else 50
         return httpx.Response(
             200,
             json={
@@ -334,8 +396,10 @@ def test_list_filters_and_offsets_across_all_server_pages():
                         "priority": "CRITICAL",
                         "startDate": "2026-08-01",
                     }
-                    for index in range(start, start + count)
-                ]
+                    for index in range(server_offset, server_offset + count)
+                ],
+                "hasMore": server_offset == 0,
+                "snapshot": snapshot,
             },
         )
 
@@ -348,7 +412,21 @@ def test_list_filters_and_offsets_across_all_server_pages():
         )
     )
 
-    assert observed_pages == [0, 1, 0]
+    assert observed_requests == [
+        {
+            "priority": "CRITICAL",
+            "detail": "full",
+            "limit": "200",
+            "offset": "0",
+        },
+        {
+            "priority": "CRITICAL",
+            "detail": "full",
+            "limit": "200",
+            "offset": "200",
+            "snapshot": snapshot,
+        },
+    ]
     assert [task["id"] for task in result["data"]["tasks"]] == [
         f"task-{index}" for index in range(205, 215)
     ]

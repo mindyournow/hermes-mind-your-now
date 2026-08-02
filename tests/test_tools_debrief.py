@@ -86,6 +86,15 @@ def test_each_action_uses_expected_method_and_path(
     assert result == {"success": True, "data": payload}
 
 
+def test_get_returns_empty_current_as_data():
+    def transport(_request):
+        return httpx.Response(200, json={"current": None})
+
+    result = json.loads(build_handler(transport)(action="get"))
+
+    assert result == {"success": True, "data": {"current": None}}
+
+
 def test_generate_defaults_to_daily_and_preserves_optional_fields():
     observed_body = None
 

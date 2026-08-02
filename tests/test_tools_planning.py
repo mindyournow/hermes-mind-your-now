@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
+import mind_your_now.tools as tool_framework
 from mind_your_now.client import MynApiClient
 from mind_your_now.tools import planning
 from mind_your_now.tools.planning import register_planning_tool
@@ -184,7 +185,11 @@ def test_dry_run_returns_customer_local_candidates_without_mutation(
 
     assert observed == [
         ("GET", "/api/v1/customers/planning-context", {}),
-        ("GET", "/api/v2/unified-tasks", {"page": "0", "size": "200"}),
+        (
+            "GET",
+            "/api/v2/unified-tasks",
+            {"detail": "full", "limit": "200", "offset": "0"},
+        ),
     ]
     assert result["success"] is True
     assert [task["id"] for task in result["data"]["tasks"]] == expected_ids
@@ -192,7 +197,54 @@ def test_dry_run_returns_customer_local_candidates_without_mutation(
     assert result["data"]["customerTimeZone"] == "America/Los_Angeles"
     assert result["data"]["dryRun"] is True
     assert result["data"]["engineDecisionsPreviewed"] is False
-    assert "MIN-932" in result["data"]["message"]
+    assert "50 pages or 10,000 tasks" in result["data"]["message"]
+
+
+def test_dry_run_marks_candidate_count_incomplete_at_scan_cap(
+    customer_now, monkeypatch
+):
+    monkeypatch.setattr(tool_framework, "UNIFIED_TASK_MAX_PAGES", 2)
+    task_requests = 0
+
+    def transport(request):
+        nonlocal task_requests
+        if request.url.path == "/api/v1/customers/planning-context":
+            return httpx.Response(
+                200,
+                json={"id": 42, "defaultTimeZone": "America/Los_Angeles"},
+            )
+
+        task_requests += 1
+        offset = int(request.url.params["offset"])
+        return httpx.Response(
+            200,
+            json={
+                "tasks": [
+                    {
+                        "id": f"task-{index}",
+                        "ownerId": 42,
+                        "taskType": "TASK",
+                        "priority": "CRITICAL",
+                        "startDate": "2026-08-02T06:30:00Z",
+                        "isCompleted": False,
+                        "isAutoScheduled": False,
+                    }
+                    for index in range(offset, offset + 200)
+                ],
+                "hasMore": True,
+                "snapshot": "stable-generation",
+            },
+        )
+
+    result = json.loads(
+        build_handler(transport)(action="schedule_all", dryRun=True)
+    )
+
+    assert task_requests == 2
+    assert result["data"]["collectionComplete"] is False
+    assert result["data"]["countIsLowerBound"] is True
+    assert result["data"]["_truncated"] is True
+    assert "_totalCount" not in result["data"]
 
 
 @pytest.mark.parametrize(

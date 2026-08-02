@@ -100,7 +100,13 @@ def test_streak_history_and_schedule_days_use_params():
         (f"/api/v2/unified-tasks/{HABIT_ID}/streak", {"includeHistory": "true"}),
         (
             "/api/v2/unified-tasks",
-            {"type": "HABIT", "days": "14", "page": "0", "size": "200"},
+            {
+                "type": "HABIT",
+                "detail": "full",
+                "days": "14",
+                "limit": "200",
+                "offset": "0",
+            },
         ),
     ]
 
@@ -125,25 +131,27 @@ def test_schedule_lists_habits():
 
 
 def test_schedule_honors_limit_beyond_first_server_page():
-    observed_pages = []
+    observed_offsets = []
+    snapshot = "stable-generation"
 
     def transport(request):
-        page = int(request.url.params["page"])
-        observed_pages.append(page)
-        start = page * 200
-        count = 200 if page == 0 else 10
+        offset = int(request.url.params["offset"])
+        observed_offsets.append(offset)
+        count = 200 if offset == 0 else 10
         return httpx.Response(
             200,
             json={
                 "tasks": [
                     {"id": f"habit-{index}", "taskType": "HABIT"}
-                    for index in range(start, start + count)
-                ]
+                    for index in range(offset, offset + count)
+                ],
+                "hasMore": offset == 0,
+                "snapshot": snapshot,
             },
         )
 
     result = json.loads(build_handler(transport)(action="schedule", limit=205))
 
-    assert observed_pages == [0, 1, 0]
+    assert observed_offsets == [0, 200]
     assert len(result["data"]["tasks"]) == 205
     assert result["data"]["_totalCount"] == 210

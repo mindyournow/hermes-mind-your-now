@@ -12,6 +12,7 @@ from typing import Any
 from mind_your_now.client import MynApiClient
 from mind_your_now.schemas import action_schema
 from mind_your_now.tools import (
+    UnifiedTaskScan,
     fetch_all_unified_tasks,
     register_myn_tool,
     tool_error,
@@ -79,16 +80,24 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
         if type(limit) is not int or limit < 1:
             return tool_error("limit must be a positive integer")
 
-        params = {"type": "HABIT"}
+        params = {"type": "HABIT", "detail": "full"}
         if input_data.get("dateRange") is not None:
             params["days"] = input_data["dateRange"]
-        data = fetch_all_unified_tasks(client, params=params)
-        if not isinstance(data, list):
+        data = fetch_all_unified_tasks(
+            client,
+            params=params,
+            match_fn=lambda task: task.get("taskType") == "HABIT",
+            stop_after=limit,
+        )
+        if not isinstance(data, UnifiedTaskScan):
             return tool_result(data)
 
-        # Defensively filter because older servers may ignore the type parameter.
-        habits = [task for task in data if task.get("taskType") == "HABIT"]
-        return tool_result(truncate({"tasks": habits}, "tasks", limit))
+        result = truncate({"tasks": data.tasks}, "tasks", limit)
+        if not data.complete:
+            result.pop("_totalCount", None)
+            result["_truncated"] = True
+            result["_collectionComplete"] = False
+        return tool_result(result)
 
     return tool_error(f"Unknown action: {action}")
 

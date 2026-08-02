@@ -13,12 +13,22 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from mind_your_now.client import MynApiClient
+from mind_your_now.client import MynApiClient, MynApiError
 from mind_your_now.schemas import action_schema
 from mind_your_now.tools import register_myn_tool, tool_error, tool_result
 
 
 MEMORY_FETCH_LIMIT = 50
+
+
+def _memory_items(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, dict) and isinstance(data.get("memories"), list):
+        return data["memories"]
+    if isinstance(data, list):
+        return data
+    return []
+
+
 MEMORY_SCHEMA = action_schema(
     ["remember", "recall", "forget", "recall_relevant", "search"],
     {
@@ -57,44 +67,39 @@ def execute_memory(client: MynApiClient, **input_data: Any) -> str:
         return tool_result(client.post("/api/v1/agent/memories", body))
 
     if action == "recall":
-        data = client.get(
-            "/api/v1/customers/memories",
-            params={"limit": MEMORY_FETCH_LIMIT},
-        )
         memory_id = input_data.get("memoryId")
         if memory_id:
-            # Handle both wrapped response {"memories": [...], "totalCount": N} and bare list
-            if isinstance(data, dict) and "memories" in data:
-                memories = data["memories"]
-            elif isinstance(data, list):
-                memories = data
-            else:
-                memories = []
-            match = next(
-                (
-                    memory
-                    for memory in memories
-                    if (memory.get("id") or memory.get("memoryId")) == memory_id
-                ),
-                None,
-            )
-            if not match:
-                return tool_error(f"Memory not found: {memory_id}")
-            return tool_result(match)
+            try:
+                memory = client.get(
+                    f"/api/v1/customers/memories/{memory_id}"
+                )
+            except MynApiError as exc:
+                if exc.status == 404:
+                    return tool_error(f"Memory not found: {memory_id}")
+                raise
+            response_id = None
+            if isinstance(memory, dict):
+                response_id = memory.get("id") or memory.get("memoryId")
+            if response_id != memory_id:
+                return tool_error("Memory lookup returned an unexpected id")
+            return tool_result(memory)
 
-        # Apply client-side limit to recall (when not searching by id)
-        from mind_your_now.tools import truncate
         limit = input_data.get("limit")
-        if limit:
-            # Normalize data to have "memories" key if wrapped differently
-            if isinstance(data, dict) and "memories" not in data:
-                # Assume data is the raw response, wrap it
-                data = {"memories": data.get("items", data.get("results", []))}
-            elif isinstance(data, list):
-                data = {"memories": data}
-            data = truncate(data, "memories", int(limit))
+        data = client.get(
+            "/api/v1/customers/memories",
+            params={"limit": MEMORY_FETCH_LIMIT if limit is None else limit},
+        )
+        memories = _memory_items(data)
 
-        return tool_result(data)
+        # Preserve main's transparent client-side truncation markers.
+        from mind_your_now.tools import truncate
+        result = data if isinstance(data, dict) else {"memories": memories}
+        if "memories" not in result:
+            result = {"memories": memories}
+        if limit:
+            result = truncate(result, "memories", int(limit))
+
+        return tool_result(result)
 
     if action == "forget":
         memory_id = input_data.get("memoryId")

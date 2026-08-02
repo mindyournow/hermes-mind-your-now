@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from mind_your_now.client import MynApiClient
-from mind_your_now.tools import fetch_all_unified_tasks, truncate
+from mind_your_now.tools import UnifiedTaskScan, fetch_all_unified_tasks, truncate
 
 
 def test_truncate_slices_list_and_marks_when_cut():
@@ -87,18 +87,25 @@ def test_truncate_non_list_value():
     assert "_truncated" not in result
 
 
-def test_fetch_all_unified_tasks_reads_every_server_page():
+def test_fetch_all_unified_tasks_reads_every_stable_server_page():
     observed = []
+    snapshot = "stable-generation"
 
     def transport(request):
         params = dict(request.url.params)
         observed.append(params)
-        page = int(params["page"])
-        start = page * 200
-        count = 200 if page == 0 else 5
+        offset = int(params["offset"])
+        count = 200 if offset == 0 else 5
         return httpx.Response(
             200,
-            json=[{"id": f"task-{index}"} for index in range(start, start + count)],
+            json={
+                "tasks": [
+                    {"id": f"task-{index}"}
+                    for index in range(offset, offset + count)
+                ],
+                "hasMore": offset == 0,
+                "snapshot": snapshot,
+            },
         )
 
     client = MynApiClient(
@@ -107,23 +114,37 @@ def test_fetch_all_unified_tasks_reads_every_server_page():
         transport=httpx.MockTransport(transport),
     )
 
-    tasks = fetch_all_unified_tasks(client, params={"type": "HABIT"})
+    scan = fetch_all_unified_tasks(client, params={"type": "HABIT"})
 
-    assert len(tasks) == 205
+    assert isinstance(scan, UnifiedTaskScan)
+    assert scan.complete is True
+    assert len(scan.tasks) == 205
     assert observed == [
-        {"type": "HABIT", "page": "0", "size": "200"},
-        {"type": "HABIT", "page": "1", "size": "200"},
-        {"type": "HABIT", "page": "0", "size": "200"},
+        {"type": "HABIT", "limit": "200", "offset": "0"},
+        {
+            "type": "HABIT",
+            "limit": "200",
+            "offset": "200",
+            "snapshot": snapshot,
+        },
     ]
 
 
 def test_fetch_all_unified_tasks_deduplicates_task_ids():
     page_zero = [{"id": f"task-{index}"} for index in range(200)]
     page_one = [{"id": "task-199"}, {"id": "task-200"}]
+    snapshot = "stable-generation"
 
     def transport(request):
-        page = int(request.url.params["page"])
-        return httpx.Response(200, json=page_zero if page == 0 else page_one)
+        offset = int(request.url.params["offset"])
+        return httpx.Response(
+            200,
+            json={
+                "tasks": page_zero if offset == 0 else page_one,
+                "hasMore": offset == 0,
+                "snapshot": snapshot,
+            },
+        )
 
     client = MynApiClient(
         "https://api.example.com",
@@ -131,26 +152,97 @@ def test_fetch_all_unified_tasks_deduplicates_task_ids():
         transport=httpx.MockTransport(transport),
     )
 
-    tasks = fetch_all_unified_tasks(client)
+    scan = fetch_all_unified_tasks(client)
 
-    assert len(tasks) == 201
-    assert tasks[-1]["id"] == "task-200"
-    assert sum(task["id"] == "task-199" for task in tasks) == 1
+    assert isinstance(scan, UnifiedTaskScan)
+    assert len(scan.tasks) == 201
+    assert scan.tasks[-1]["id"] == "task-200"
+    assert sum(task["id"] == "task-199" for task in scan.tasks) == 1
 
 
-def test_fetch_all_unified_tasks_rejects_changed_first_page():
+def test_fetch_all_unified_tasks_stops_after_enough_matches():
+    observed_offsets = []
+
+    def transport(request):
+        offset = int(request.url.params["offset"])
+        observed_offsets.append(offset)
+        return httpx.Response(
+            200,
+            json={
+                "tasks": [
+                    {"id": f"task-{index}", "priority": "CRITICAL"}
+                    for index in range(offset, offset + 200)
+                ],
+                "hasMore": True,
+                "snapshot": "stable-generation",
+            },
+        )
+
+    client = MynApiClient(
+        "https://api.example.com",
+        "key",
+        transport=httpx.MockTransport(transport),
+    )
+
+    scan = fetch_all_unified_tasks(
+        client,
+        match_fn=lambda task: task["priority"] == "CRITICAL",
+        stop_after=20,
+    )
+
+    assert isinstance(scan, UnifiedTaskScan)
+    assert scan.complete is False
+    assert len(scan.tasks) == 200
+    assert observed_offsets == [0]
+
+
+def test_fetch_all_unified_tasks_stops_at_hard_page_cap():
     requests = 0
-    original = [{"id": f"task-{index}"} for index in range(200)]
 
     def transport(request):
         nonlocal requests
         requests += 1
-        page = int(request.url.params["page"])
-        if page == 1:
-            return httpx.Response(200, json=[{"id": "task-200"}])
-        if requests == 3:
-            return httpx.Response(200, json=[{"id": "inserted"}, *original[:-1]])
-        return httpx.Response(200, json=original)
+        offset = int(request.url.params["offset"])
+        return httpx.Response(
+            200,
+            json={
+                "tasks": [
+                    {"id": f"task-{index}"}
+                    for index in range(offset, offset + 200)
+                ],
+                "hasMore": True,
+                "snapshot": "stable-generation",
+            },
+        )
+
+    client = MynApiClient(
+        "https://api.example.com",
+        "key",
+        transport=httpx.MockTransport(transport),
+    )
+
+    scan = fetch_all_unified_tasks(client)
+
+    assert isinstance(scan, UnifiedTaskScan)
+    assert scan.complete is False
+    assert scan.pages == 50
+    assert scan.scanned_items == 10_000
+    assert requests == 50
+
+
+def test_fetch_all_unified_tasks_rejects_changed_snapshot():
+    original = [{"id": f"task-{index}"} for index in range(200)]
+
+    def transport(request):
+        offset = int(request.url.params["offset"])
+        return httpx.Response(
+            200,
+            json={
+                "tasks": original if offset == 0 else [{"id": "task-200"}],
+                "hasMore": offset == 0,
+                "snapshot": "first" if offset == 0 else "changed",
+            },
+        )
 
     client = MynApiClient(
         "https://api.example.com",
@@ -167,7 +259,16 @@ def test_fetch_all_unified_tasks_rejects_non_advancing_pages():
     client = MynApiClient(
         "https://api.example.com",
         "key",
-        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=page)),
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={
+                    "tasks": page,
+                    "hasMore": True,
+                    "snapshot": "stable-generation",
+                },
+            )
+        ),
     )
 
     with pytest.raises(RuntimeError, match="did not advance"):

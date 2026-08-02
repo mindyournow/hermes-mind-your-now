@@ -7,6 +7,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from mind_your_now.client import MynApiError
@@ -34,25 +35,41 @@ def _redact_secrets(obj: Any) -> Any:
         return obj
 
 
+UNIFIED_TASK_PAGE_SIZE = 200
+UNIFIED_TASK_MAX_PAGES = 50
+UNIFIED_TASK_MAX_ITEMS = UNIFIED_TASK_PAGE_SIZE * UNIFIED_TASK_MAX_PAGES
+
+
+@dataclass(frozen=True)
+class UnifiedTaskScan:
+    tasks: list[dict[str, Any]]
+    complete: bool
+    scanned_items: int
+    pages: int
+
+
 def fetch_all_unified_tasks(
     client: Any,
     *,
     params: dict[str, Any] | None = None,
-) -> Any:
-    """Retrieve every page from the unified-task endpoint.
+    match_fn: Callable[[dict[str, Any]], bool] | None = None,
+    stop_after: int | None = None,
+) -> UnifiedTaskScan | Any:
+    """Scan stable task pages with caller-aware stopping and a hard safety cap.
 
-    The API defaults to 50 records and caps pages at 200. Results are deduplicated by
-    task ID, and multi-page scans re-read page zero to detect boundary shifts there.
-    The API exposes no snapshot token, so mutations confined to later pages can still
-    make the result a best-effort collection rather than a transactional snapshot.
-    Unexpected first-page shapes are returned unchanged for backward compatibility.
+    The API requires a limit, caps it at 200, and returns a snapshot token that binds
+    later offsets to the first page's collection generation. Matching results are
+    deduplicated by task ID. A valid scan never exceeds 50 pages or 10,000 source
+    items; callers receive ``complete=False`` when early stopping or the cap applies.
+    Unexpected first-page shapes remain backward compatible.
     """
-    page_size = 200
-    page = 0
+    offset = 0
+    snapshot: str | None = None
     tasks: list[dict[str, Any]] = []
     seen_task_ids: set[str] = set()
     seen_page_signatures: set[tuple[str, ...]] = set()
-    first_page_signature: tuple[str, ...] | None = None
+    scanned_items = 0
+    pages = 0
 
     def page_tasks(data: Any) -> list[dict[str, Any]] | None:
         if isinstance(data, list):
@@ -68,20 +85,33 @@ def fetch_all_unified_tasks(
         )
 
     while True:
-        page_params = {**(params or {}), "page": page, "size": page_size}
+        page_params = {
+            **(params or {}),
+            "limit": UNIFIED_TASK_PAGE_SIZE,
+            "offset": offset,
+        }
+        if snapshot is not None:
+            page_params["snapshot"] = snapshot
+
         data = client.get("/api/v2/unified-tasks", params=page_params)
         current_page = page_tasks(data)
         if current_page is None:
-            if page == 0:
+            if offset == 0:
                 return data
             raise RuntimeError("Unified-task pagination returned an unexpected response shape")
 
         current_signature = signature(current_page)
-        if page == 0:
-            first_page_signature = current_signature
         if current_signature in seen_page_signatures:
             raise RuntimeError("Unified-task pagination did not advance")
         seen_page_signatures.add(current_signature)
+        pages += 1
+        scanned_items += len(current_page)
+
+        response_snapshot = data.get("snapshot") if isinstance(data, dict) else None
+        if offset == 0:
+            snapshot = response_snapshot
+        elif snapshot is not None and response_snapshot != snapshot:
+            raise RuntimeError("Unified-task collection changed during pagination")
 
         for task in current_page:
             task_id = task.get("id")
@@ -90,18 +120,25 @@ def fetch_all_unified_tasks(
                 if task_key in seen_task_ids:
                     continue
                 seen_task_ids.add(task_key)
-            tasks.append(task)
+            if match_fn is None or match_fn(task):
+                tasks.append(task)
 
-        if len(current_page) < page_size:
-            if page > 0:
-                check_params = {**(params or {}), "page": 0, "size": page_size}
-                check_page = page_tasks(
-                    client.get("/api/v2/unified-tasks", params=check_params)
-                )
-                if check_page is None or signature(check_page) != first_page_signature:
-                    raise RuntimeError("Unified-task collection changed during pagination")
-            return tasks
-        page += 1
+        has_more = (
+            bool(data.get("hasMore"))
+            if isinstance(data, dict) and "hasMore" in data
+            else len(current_page) == UNIFIED_TASK_PAGE_SIZE
+        )
+        if not has_more:
+            return UnifiedTaskScan(tasks, True, scanned_items, pages)
+        if not current_page:
+            raise RuntimeError("Unified-task pagination did not advance")
+        if isinstance(data, dict) and snapshot is None:
+            raise RuntimeError("Unified-task pagination omitted its snapshot token")
+        if stop_after is not None and len(tasks) >= stop_after:
+            return UnifiedTaskScan(tasks, False, scanned_items, pages)
+        if pages >= UNIFIED_TASK_MAX_PAGES or scanned_items >= UNIFIED_TASK_MAX_ITEMS:
+            return UnifiedTaskScan(tasks, False, scanned_items, pages)
+        offset += len(current_page)
 
 
 def truncate(payload: dict[str, Any], key: str, limit: int, *, offset: int = 0) -> dict[str, Any]:

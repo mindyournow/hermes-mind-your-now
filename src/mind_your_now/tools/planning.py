@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from mind_your_now.client import MynApiClient
 from mind_your_now.schemas import action_schema
 from mind_your_now.tools import (
+    UnifiedTaskScan,
     fetch_all_unified_tasks,
     register_myn_tool,
     tool_error,
@@ -186,13 +187,13 @@ def _dry_run_preview(
 ) -> str:
     customer_id, zone = _planning_context(client)
     now = _now_in_zone(zone)
-    data = fetch_all_unified_tasks(client)
-    if not isinstance(data, list):
+    data = fetch_all_unified_tasks(client, params={"detail": "full"})
+    if not isinstance(data, UnifiedTaskScan):
         return tool_error("Unable to read the task collection for planning dryRun")
 
     owned_tasks = [
         task
-        for task in data
+        for task in data.tasks
         if task.get("ownerId") is not None
         and str(task["ownerId"]) == customer_id
     ]
@@ -218,15 +219,20 @@ def _dry_run_preview(
         "count": candidate_count,
         "customerTimeZone": str(zone),
         "engineDecisionsPreviewed": False,
+        "collectionComplete": data.complete,
+        "scannedTaskCount": data.scanned_items,
         "message": (
             "Read-only candidate task preview in the customer's configured timezone. "
             "Only tasks owned by the customer are included, matching live planning. "
-            "The planning engine's resulting dates and placements cannot be previewed "
-            "until MIN-932. Multi-page reads are deduplicated and boundary-checked but "
-            "are not a transactional snapshot because the API exposes no snapshot token."
+            "The planning engine's resulting dates and placements cannot be previewed. "
+            "Multi-page reads are deduplicated, snapshot-bound, and capped at "
+            "50 pages or 10,000 tasks."
         ),
     }
-    if len(tasks) < candidate_count:
+    if not data.complete:
+        payload["_truncated"] = True
+        payload["countIsLowerBound"] = True
+    elif len(tasks) < candidate_count:
         payload["_truncated"] = True
         payload["_totalCount"] = candidate_count
     return tool_result(payload)
