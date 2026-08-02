@@ -232,6 +232,8 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
             )
             if input_data.get(key) is not None
         }
+        params["detail"] = "full"
+
         def matches_filters(task: dict[str, Any]) -> bool:
             return (
                 (not input_data.get("status") or task.get("status") == input_data["status"])

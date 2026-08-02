@@ -187,7 +187,7 @@ def _dry_run_preview(
 ) -> str:
     customer_id, zone = _planning_context(client)
     now = _now_in_zone(zone)
-    data = fetch_all_unified_tasks(client)
+    data = fetch_all_unified_tasks(client, params={"detail": "full"})
     if not isinstance(data, UnifiedTaskScan):
         return tool_error("Unable to read the task collection for planning dryRun")
 

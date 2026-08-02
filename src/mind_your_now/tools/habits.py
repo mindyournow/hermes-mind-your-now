@@ -80,7 +80,7 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
         if type(limit) is not int or limit < 1:
             return tool_error("limit must be a positive integer")
 
-        params = {"type": "HABIT"}
+        params = {"type": "HABIT", "detail": "full"}
         if input_data.get("dateRange") is not None:
             params["days"] = input_data["dateRange"]
         data = fetch_all_unified_tasks(

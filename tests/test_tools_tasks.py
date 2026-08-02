@@ -156,7 +156,11 @@ def test_list_sends_limit_and_unwraps_tasks_envelope():
 
     result = json.loads(build_handler(transport)(action="list", limit=7))
 
-    assert observed_params == {"limit": "200", "offset": "0"}
+    assert observed_params == {
+        "detail": "full",
+        "limit": "200",
+        "offset": "0",
+    }
     assert result["data"] == {"tasks": tasks}
 
 
@@ -345,7 +349,12 @@ def test_list_date_filters_use_inclusive_task_interval_overlap(filters, expected
 
     result = json.loads(build_handler(transport)(action="list", **filters))
 
-    assert observed_params == {**filters, "limit": "200", "offset": "0"}
+    assert observed_params == {
+        **filters,
+        "detail": "full",
+        "limit": "200",
+        "offset": "0",
+    }
     assert [task["id"] for task in result["data"]["tasks"]] == expected_ids
 
 
@@ -404,9 +413,15 @@ def test_list_filters_and_offsets_across_all_server_pages():
     )
 
     assert observed_requests == [
-        {"priority": "CRITICAL", "limit": "200", "offset": "0"},
         {
             "priority": "CRITICAL",
+            "detail": "full",
+            "limit": "200",
+            "offset": "0",
+        },
+        {
+            "priority": "CRITICAL",
+            "detail": "full",
             "limit": "200",
             "offset": "200",
             "snapshot": snapshot,

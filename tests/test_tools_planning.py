@@ -185,7 +185,11 @@ def test_dry_run_returns_customer_local_candidates_without_mutation(
 
     assert observed == [
         ("GET", "/api/v1/customers/planning-context", {}),
-        ("GET", "/api/v2/unified-tasks", {"limit": "200", "offset": "0"}),
+        (
+            "GET",
+            "/api/v2/unified-tasks",
+            {"detail": "full", "limit": "200", "offset": "0"},
+        ),
     ]
     assert result["success"] is True
     assert [task["id"] for task in result["data"]["tasks"]] == expected_ids

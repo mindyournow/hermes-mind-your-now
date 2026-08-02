@@ -100,7 +100,13 @@ def test_streak_history_and_schedule_days_use_params():
         (f"/api/v2/unified-tasks/{HABIT_ID}/streak", {"includeHistory": "true"}),
         (
             "/api/v2/unified-tasks",
-            {"type": "HABIT", "days": "14", "limit": "200", "offset": "0"},
+            {
+                "type": "HABIT",
+                "detail": "full",
+                "days": "14",
+                "limit": "200",
+                "offset": "0",
+            },
         ),
     ]
 
