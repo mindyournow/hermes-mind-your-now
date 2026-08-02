@@ -6,11 +6,20 @@ import httpx
 import pytest
 
 from mind_your_now.client import MynApiClient
-from mind_your_now.tools.projects import register_projects_tool
+from mind_your_now.tools.projects import PROJECTS_SCHEMA, register_projects_tool
 
 
 PROJECT_ID = "11111111-1111-4111-8111-111111111111"
 TASK_ID = "22222222-2222-4222-8222-222222222222"
+REMOVED_FIELDS = {
+    "name",
+    "description",
+    "color",
+    "icon",
+    "parentProjectId",
+    "includeArchived",
+    "includeStats",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -33,7 +42,7 @@ class Context:
         self.registration = kwargs
 
 
-def build_handler(transport):
+def build_registration(transport):
     client = MynApiClient(
         "https://api.example.com",
         "myn-key",
@@ -41,7 +50,11 @@ def build_handler(transport):
     )
     context = Context()
     register_projects_tool(context, client, lambda: True)
-    return context.registration["handler"]
+    return context.registration
+
+
+def build_handler(transport):
+    return build_registration(transport)["handler"]
 
 
 @pytest.mark.parametrize(
@@ -52,11 +65,6 @@ def build_handler(transport):
             {"action": "get", "projectId": PROJECT_ID},
             "GET",
             f"/api/project/{PROJECT_ID}",
-        ),
-        (
-            {"action": "create", "name": "Launch"},
-            "POST",
-            "/api/project/create",
         ),
         (
             {
@@ -95,41 +103,49 @@ def test_actions_use_expected_methods_and_paths(input_data, method, path):
     assert result == {"success": True, "data": expected_data}
 
 
-def test_list_uses_encoded_flags_and_create_maps_parent_id():
-    observed = []
+def test_schema_exposes_only_supported_actions_and_fields():
+    properties = PROJECTS_SCHEMA["properties"]
+
+    assert properties["action"]["enum"] == ["list", "get", "move_task"]
+    assert REMOVED_FIELDS.isdisjoint(properties)
+    assert set(properties) == {
+        "action",
+        "projectId",
+        "taskId",
+        "targetProjectId",
+        "limit",
+    }
+
+
+def test_list_sends_requested_limit_to_api():
+    observed_params = []
 
     def transport(request):
-        observed.append(
-            {
-                "path": request.url.path,
-                "params": dict(request.url.params),
-                "body": json.loads(request.content) if request.content else None,
-            }
-        )
-        return httpx.Response(200, json={})
+        observed_params.append(dict(request.url.params))
+        return httpx.Response(200, json={"projects": []})
 
-    handler = build_handler(transport)
-    handler(action="list", includeArchived=True, includeStats=True)
-    handler(
-        action="create",
-        name="Launch",
-        parentProjectId=PROJECT_ID,
-        color="#112233",
+    result = json.loads(build_handler(transport)(action="list", limit=25))
+
+    assert observed_params == [{"limit": "25"}]
+    assert result == {"success": True, "data": {"projects": []}}
+
+
+def test_create_is_rejected_without_calling_api():
+    def transport(_request):
+        raise AssertionError("create must not call the API")
+
+    result = json.loads(build_handler(transport)(action="create", name="Launch"))
+
+    assert result == {"success": False, "error": "Unknown action: create"}
+
+
+def test_description_explains_fixed_collections_and_move_task():
+    registration = build_registration(
+        lambda _request: httpx.Response(200, json={"projects": []})
     )
+    description = registration["description"]
 
-    assert observed == [
-        {
-            "path": "/api/project/defaults",
-            "params": {
-                "limit": "50",
-                "includeArchived": "true",
-                "includeStats": "true",
-            },
-            "body": None,
-        },
-        {
-            "path": "/api/project/create",
-            "params": {},
-            "body": {"name": "Launch", "parentId": PROJECT_ID, "color": "#112233"},
-        },
-    ]
+    assert "fixed set of collections" in description
+    assert "cannot be created, renamed, or deleted" in description
+    assert "use move_task" in description
+    assert "Actions: list, get, move_task" in description

@@ -1,8 +1,4 @@
-"""myn_projects: project and category management.
-
-Project graphs are nested (owner/account relationships). Trimmed via client-side truncate
-and slimmed to remove nested graphs. See MIN-933 for scoped project filtering.
-"""
+"""myn_projects: browse fixed collections and file tasks into them."""
 
 from __future__ import annotations
 
@@ -15,19 +11,12 @@ from mind_your_now.tools import register_myn_tool, tool_error, tool_result
 
 
 PROJECTS_SCHEMA = action_schema(
-    ["list", "get", "create", "move_task"],
+    ["list", "get", "move_task"],
     {
         "projectId": {"type": "string", "format": "uuid"},
-        "name": {"type": "string", "minLength": 1, "maxLength": 100},
-        "description": {"type": "string", "maxLength": 500},
-        "color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
-        "icon": {"type": "string"},
-        "parentProjectId": {"type": "string", "format": "uuid"},
         "taskId": {"type": "string", "format": "uuid"},
         "targetProjectId": {"type": "string", "format": "uuid"},
-        "includeArchived": {"type": "boolean", "default": False},
-        "includeStats": {"type": "boolean", "default": True},
-        "limit": {"type": "number", "description": "Maximum projects to return (client-side truncation)"},
+        "limit": {"type": "number", "description": "Maximum collections to return"},
     },
 )
 
@@ -36,14 +25,9 @@ def execute_projects(client: MynApiClient, **input_data: Any) -> str:
     action = input_data.get("action")
 
     if action == "list":
-        params = {"limit": 50}
-        if input_data.get("includeArchived"):
-            params["includeArchived"] = "true"
-        if input_data.get("includeStats"):
-            params["includeStats"] = "true"
-        data = client.get("/api/project/defaults", params=params)
+        limit = int(input_data.get("limit", 50))
+        data = client.get("/api/project/defaults", params={"limit": limit})
 
-        # Normalize bare array or wrapped response.
         if isinstance(data, list):
             projects = data
         elif isinstance(data, dict) and isinstance(data.get("projects"), list):
@@ -51,20 +35,10 @@ def execute_projects(client: MynApiClient, **input_data: Any) -> str:
         else:
             return tool_result(data)
 
-        # Slim output - remove nested owner/account graphs.
-        slimmed = []
-        for project in projects:
-            slim_project = {
-                k: v for k, v in project.items()
-                if k not in {"owner", "account", "ownerAccount", "graphs", "nested"}
-            }
-            slimmed.append(slim_project)
-
-        # Preserve the client-side truncation markers introduced on main.
         from mind_your_now.tools import truncate
-        result = {"projects": slimmed}
+        result = {"projects": projects}
         if input_data.get("limit"):
-            result = truncate(result, "projects", int(input_data["limit"]))
+            result = truncate(result, "projects", limit)
 
         return tool_result(result)
 
@@ -73,21 +47,6 @@ def execute_projects(client: MynApiClient, **input_data: Any) -> str:
         if not project_id:
             return tool_error("projectId is required for get action")
         return tool_result(client.get(f"/api/project/{project_id}"))
-
-    if action == "create":
-        if not input_data.get("name"):
-            return tool_error("name is required for create action")
-        body = {"name": input_data["name"]}
-        mapping = {
-            "description": "description",
-            "color": "color",
-            "icon": "icon",
-            "parentProjectId": "parentId",
-        }
-        for source, destination in mapping.items():
-            if input_data.get(source):
-                body[destination] = input_data[source]
-        return tool_result(client.post("/api/project/create", body))
 
     if action == "move_task":
         task_id = input_data.get("taskId")
@@ -116,6 +75,11 @@ def register_projects_tool(
         schema=PROJECTS_SCHEMA,
         handler=lambda **kwargs: execute_projects(client, **kwargs),
         check_fn=check_fn,
-        description="Manage projects and categories. Actions: list, get, create, move_task.",
+        description=(
+            'Browse MYN collections (called "projects" in the API) and file tasks into them. '
+            "MYN has a fixed set of collections — PERSONAL, WORK, GROCERIES, BOOKS, CHORES, "
+            "and so on. They cannot be created, renamed, or deleted; use move_task to change "
+            "which collection a task belongs to. Actions: list, get, move_task."
+        ),
         emoji="📁",
     )
