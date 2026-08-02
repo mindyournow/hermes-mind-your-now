@@ -124,7 +124,7 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
                 }
             )
 
-        data = client.get("/api/v2/unified-tasks", params={"type": "HABIT"})
+        data = fetch_all_unified_tasks(client, params={"type": "HABIT"})
         habits = data.get("tasks", []) if isinstance(data, dict) else data
         reminders = [
             {

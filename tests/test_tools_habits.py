@@ -217,7 +217,13 @@ def test_reminders_lists_only_enabled_habits_from_unified_tasks(wrapped):
 
     result = json.loads(build_handler(transport)(action="reminders"))
 
-    assert observed == [("GET", "/api/v2/unified-tasks", {"type": "HABIT"})]
+    assert observed == [
+        (
+            "GET",
+            "/api/v2/unified-tasks",
+            {"type": "HABIT", "page": "0", "size": "200"},
+        )
+    ]
     assert result == {
         "success": True,
         "data": {
@@ -230,6 +236,42 @@ def test_reminders_lists_only_enabled_habits_from_unified_tasks(wrapped):
             ]
         },
     }
+
+
+def test_reminders_lists_enabled_habit_from_later_server_page():
+    observed_pages = []
+    first_page = [
+        {
+            "id": f"habit-{index}",
+            "taskType": "HABIT",
+            "reminderEnabled": False,
+        }
+        for index in range(200)
+    ]
+    later_reminder = {
+        "id": HABIT_ID,
+        "title": "Later-page habit",
+        "taskType": "HABIT",
+        "reminderEnabled": True,
+        "reminderTime": "09:00",
+    }
+
+    def transport(request):
+        page = int(request.url.params["page"])
+        observed_pages.append(page)
+        tasks = first_page if page == 0 else [later_reminder]
+        return httpx.Response(200, json={"tasks": tasks})
+
+    result = json.loads(build_handler(transport)(action="reminders"))
+
+    assert observed_pages == [0, 1, 0]
+    assert result["data"]["reminders"] == [
+        {
+            "habitId": HABIT_ID,
+            "title": "Later-page habit",
+            "reminderTime": "09:00",
+        }
+    ]
 
 
 def test_streak_history_and_schedule_days_use_params():
