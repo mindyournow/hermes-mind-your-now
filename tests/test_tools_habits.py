@@ -109,6 +109,81 @@ def test_reminders_reads_settings_from_unified_task():
     }
 
 
+def test_reminders_write_uses_guarded_patch_with_real_field_names():
+    observed = []
+
+    def transport(request):
+        observed.append(
+            {
+                "method": request.method,
+                "path": request.url.path,
+                "stateHash": request.headers.get("X-MYN-State-Hash"),
+                "body": json.loads(request.content) if request.content else None,
+            }
+        )
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": HABIT_ID, "stateHash": "hash-v1"})
+        return httpx.Response(
+            200,
+            json={
+                "id": HABIT_ID,
+                "reminderEnabled": True,
+                "reminderTime": "09:00",
+            },
+        )
+
+    result = json.loads(
+        build_handler(transport)(
+            action="reminders",
+            habitId=HABIT_ID,
+            enableReminders=True,
+            reminderTime="09:00",
+        )
+    )
+
+    assert observed == [
+        {
+            "method": "GET",
+            "path": f"/api/v2/unified-tasks/{HABIT_ID}",
+            "stateHash": None,
+            "body": None,
+        },
+        {
+            "method": "PATCH",
+            "path": f"/api/v2/unified-tasks/{HABIT_ID}",
+            "stateHash": "hash-v1",
+            "body": {"reminderEnabled": True, "reminderTime": "09:00"},
+        },
+    ]
+    assert result["success"] is True
+
+
+def test_reminders_write_retries_once_with_conflict_state_hash():
+    observed_hashes = []
+
+    def transport(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": HABIT_ID, "stateHash": "hash-v1"})
+        observed_hashes.append(request.headers.get("X-MYN-State-Hash"))
+        if len(observed_hashes) == 1:
+            return httpx.Response(
+                409,
+                json={"error": "stale state", "currentStateHash": "hash-v2"},
+            )
+        return httpx.Response(200, json={"id": HABIT_ID, "reminderEnabled": False})
+
+    result = json.loads(
+        build_handler(transport)(
+            action="reminders",
+            habitId=HABIT_ID,
+            enableReminders=False,
+        )
+    )
+
+    assert observed_hashes == ["hash-v1", "hash-v2"]
+    assert result["success"] is True
+
+
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_reminders_lists_only_enabled_habits_from_unified_tasks(wrapped):
     observed = []

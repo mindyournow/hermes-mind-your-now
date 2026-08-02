@@ -98,6 +98,23 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
     if action == "reminders":
         habit_id = input_data.get("habitId")
         if habit_id:
+            enable_reminders = input_data.get("enableReminders")
+            reminder_time = input_data.get("reminderTime")
+            if enable_reminders is not None or reminder_time is not None:
+                updates = {}
+                if enable_reminders is not None:
+                    updates["reminderEnabled"] = enable_reminders
+                if reminder_time is not None:
+                    updates["reminderTime"] = reminder_time
+                return tool_result(
+                    client.guarded_write(
+                        "PATCH",
+                        f"/api/v2/unified-tasks/{habit_id}",
+                        json=updates,
+                        get_path=f"/api/v2/unified-tasks/{habit_id}",
+                    )
+                )
+
             task = client.get(f"/api/v2/unified-tasks/{habit_id}")
             return tool_result(
                 {
