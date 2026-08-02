@@ -163,124 +163,70 @@ def test_recall_sends_limit_and_unwraps_memories_envelope():
     assert result["data"]["totalCount"] == 1
 
 
-def test_recall_filters_by_memory_id_after_bounded_fetch():
-    observed_params = None
+def test_recall_by_id_uses_customer_owned_direct_lookup():
+    observed = None
 
     def transport(request):
-        nonlocal observed_params
-        observed_params = dict(request.url.params)
-        return httpx.Response(
-            200,
-            json={
-                "memories": [
-                    memory_dto(MEMORY_ID, "Match"),
-                    memory_dto("other", "Other"),
-                ],
-                "totalCount": 2,
-                "limit": 50,
-                "offset": 0,
-                "hasMore": False,
-            },
-        )
+        nonlocal observed
+        observed = (request.url.path, dict(request.url.params))
+        return httpx.Response(200, json=memory_dto(MEMORY_ID, "Match"))
 
     result = json.loads(
         build_handler(transport)(action="recall", memoryId=MEMORY_ID)
     )
 
-    assert observed_params == {"limit": "200", "offset": "0"}
+    assert observed == (
+        f"/api/v1/customers/memories/{MEMORY_ID}",
+        {},
+    )
     assert result["data"] == memory_dto(MEMORY_ID, "Match")
 
 
-def test_recall_by_id_scans_later_pages_ignoring_list_limit():
-    observed_params = []
+def test_recall_by_id_ignores_the_list_limit():
+    requests = 0
 
     def transport(request):
-        params = dict(request.url.params)
-        observed_params.append(params)
-        offset = int(params["offset"])
-        memories = (
-            [
-                memory_dto(f"other-{index}", f"Other {index}")
-                for index in range(200)
-            ]
-            if offset == 0
-            else [memory_dto(MEMORY_ID, "Match")]
-        )
-        return httpx.Response(
-            200,
-            json={
-                "memories": memories,
-                "totalCount": 201,
-                "limit": 200,
-                "offset": offset,
-                "hasMore": offset == 0,
-            },
-        )
+        nonlocal requests
+        requests += 1
+        assert dict(request.url.params) == {}
+        return httpx.Response(200, json=memory_dto(MEMORY_ID, "Match"))
 
     result = json.loads(
         build_handler(transport)(action="recall", memoryId=MEMORY_ID, limit=1)
     )
 
-    assert observed_params == [
-        {"limit": "200", "offset": "0"},
-        {"limit": "200", "offset": "200"},
-    ]
+    assert requests == 1
     assert result["data"] == memory_dto(MEMORY_ID, "Match")
 
 
-def test_recall_by_id_can_search_beyond_ten_thousand_memories():
-    requests = 0
-    target_id = "target-after-old-cap"
+def test_recall_by_id_rejects_a_mismatched_direct_response():
+    other_id = "22222222-2222-4222-8222-222222222222"
 
     def transport(request):
-        nonlocal requests
-        requests += 1
-        offset = int(request.url.params["offset"])
-        end = min(offset + 200, 10_001)
-        memories = [
-            {
-                "id": target_id if index == 10_000 else f"other-{index}",
-                "content": f"Memory {index}",
-            }
-            for index in range(offset, end)
-        ]
-        return httpx.Response(
-            200,
-            json={
-                "memories": memories,
-                "totalCount": 10_001,
-                "limit": 200,
-                "offset": offset,
-                "hasMore": end < 10_001,
-            },
-        )
+        return httpx.Response(200, json=memory_dto(other_id, "Other"))
 
     result = json.loads(
-        build_handler(transport)(action="recall", memoryId=target_id)
+        build_handler(transport)(action="recall", memoryId=MEMORY_ID)
     )
 
-    assert requests == 51
-    assert result["data"]["id"] == target_id
+    assert result == {
+        "success": False,
+        "error": "Memory lookup returned an unexpected id",
+    }
 
 
-def test_recall_by_id_handles_wrapped_response():
-    """Recall by ID reads the memory from the paginated response envelope."""
-    memory_id = "mem-123"
-
+def test_recall_by_id_returns_stable_not_found_error():
     def transport(request):
-        return httpx.Response(
-            200,
-            json={
-                "memories": [
-                    {"id": memory_id, "content": "Match"},
-                    {"id": "other", "content": "Other"},
-                ],
-                "totalCount": 2,
-            },
-        )
+        return httpx.Response(404, json={"message": "Memory not found"})
 
-    result = json.loads(build_handler(transport)(action="recall", memoryId=memory_id))
-    assert result["data"] == {"id": memory_id, "content": "Match"}
+    result = json.loads(
+        build_handler(transport)(action="recall", memoryId=MEMORY_ID)
+    )
+
+    assert result == {
+        "success": False,
+        "error": f"Memory not found: {MEMORY_ID}",
+    }
 
 
 def test_recall_by_id_matches_legacy_memory_id_field():
@@ -289,28 +235,22 @@ def test_recall_by_id_matches_legacy_memory_id_field():
     def transport(request):
         return httpx.Response(
             200,
-            json=[
-                {"memoryId": memory_id, "content": "Found"},
-                {"memoryId": "other", "content": "Not this"},
-            ],
+            json={"memoryId": memory_id, "content": "Found"},
         )
 
     result = json.loads(build_handler(transport)(action="recall", memoryId=memory_id))
     assert result["data"] == {"memoryId": memory_id, "content": "Found"}
 
 
-def test_recall_by_id_handles_bare_list():
-    """Recall accepts bare list responses for compatibility."""
-    memory_id = "mem-789"
-
+def test_recall_by_id_rejects_a_non_object_response():
     def transport(request):
-        return httpx.Response(
-            200,
-            json=[
-                {"id": memory_id, "content": "Match"},
-                {"id": "other", "content": "Other"},
-            ],
-        )
+        return httpx.Response(200, json=[])
 
-    result = json.loads(build_handler(transport)(action="recall", memoryId=memory_id))
-    assert result["data"] == {"id": memory_id, "content": "Match"}
+    result = json.loads(
+        build_handler(transport)(action="recall", memoryId=MEMORY_ID)
+    )
+
+    assert result == {
+        "success": False,
+        "error": "Memory lookup returned an unexpected id",
+    }

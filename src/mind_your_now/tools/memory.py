@@ -13,13 +13,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from mind_your_now.client import MynApiClient
+from mind_your_now.client import MynApiClient, MynApiError
 from mind_your_now.schemas import action_schema
 from mind_your_now.tools import register_myn_tool, tool_error, tool_result
 
 
 MEMORY_FETCH_LIMIT = 50
-MEMORY_LOOKUP_PAGE_SIZE = 200
 
 
 def _memory_items(data: Any) -> list[dict[str, Any]]:
@@ -28,60 +27,6 @@ def _memory_items(data: Any) -> list[dict[str, Any]]:
     if isinstance(data, list):
         return data
     return []
-
-
-def _find_memory_by_id(
-    client: MynApiClient,
-    memory_id: str,
-) -> tuple[dict[str, Any] | None, bool]:
-    offset = 0
-    page = 0
-    expected_pages: int | None = None
-    seen_offsets: set[int] = set()
-
-    while expected_pages is None or page < expected_pages:
-        if offset in seen_offsets:
-            return None, False
-        seen_offsets.add(offset)
-
-        data = client.get(
-            "/api/v1/customers/memories",
-            params={"limit": MEMORY_LOOKUP_PAGE_SIZE, "offset": offset},
-        )
-        memories = _memory_items(data)
-        if expected_pages is None:
-            total_count = data.get("totalCount") if isinstance(data, dict) else None
-            if isinstance(total_count, int) and total_count >= 0:
-                expected_pages = max(
-                    1,
-                    (total_count + MEMORY_LOOKUP_PAGE_SIZE - 1)
-                    // MEMORY_LOOKUP_PAGE_SIZE,
-                )
-            elif isinstance(data, dict) and data.get("hasMore"):
-                return None, False
-            else:
-                expected_pages = 1
-
-        match = next(
-            (
-                memory
-                for memory in memories
-                if (memory.get("id") or memory.get("memoryId")) == memory_id
-            ),
-            None,
-        )
-        if match is not None:
-            return match, True
-
-        page += 1
-        has_more = bool(data.get("hasMore")) if isinstance(data, dict) else False
-        if not has_more:
-            return None, True
-        if not memories or page >= expected_pages:
-            return None, False
-        offset += len(memories)
-
-    return None, False
 
 
 MEMORY_SCHEMA = action_schema(
@@ -124,14 +69,20 @@ def execute_memory(client: MynApiClient, **input_data: Any) -> str:
     if action == "recall":
         memory_id = input_data.get("memoryId")
         if memory_id:
-            match, complete = _find_memory_by_id(client, memory_id)
-            if match is not None:
-                return tool_result(match)
-            if not complete:
-                return tool_error(
-                    "Memory lookup pagination was inconsistent with totalCount"
+            try:
+                memory = client.get(
+                    f"/api/v1/customers/memories/{memory_id}"
                 )
-            return tool_error(f"Memory not found: {memory_id}")
+            except MynApiError as exc:
+                if exc.status == 404:
+                    return tool_error(f"Memory not found: {memory_id}")
+                raise
+            response_id = None
+            if isinstance(memory, dict):
+                response_id = memory.get("id") or memory.get("memoryId")
+            if response_id != memory_id:
+                return tool_error("Memory lookup returned an unexpected id")
+            return tool_result(memory)
 
         limit = input_data.get("limit")
         data = client.get(
