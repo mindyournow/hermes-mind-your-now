@@ -20,7 +20,6 @@ from mind_your_now.tools import register_myn_tool, tool_error, tool_result
 
 MEMORY_FETCH_LIMIT = 50
 MEMORY_LOOKUP_PAGE_SIZE = 200
-MEMORY_LOOKUP_MAX_PAGES = 50
 
 
 def _memory_items(data: Any) -> list[dict[str, Any]]:
@@ -36,12 +35,33 @@ def _find_memory_by_id(
     memory_id: str,
 ) -> tuple[dict[str, Any] | None, bool]:
     offset = 0
-    for _page in range(MEMORY_LOOKUP_MAX_PAGES):
+    page = 0
+    expected_pages: int | None = None
+    seen_offsets: set[int] = set()
+
+    while expected_pages is None or page < expected_pages:
+        if offset in seen_offsets:
+            return None, False
+        seen_offsets.add(offset)
+
         data = client.get(
             "/api/v1/customers/memories",
             params={"limit": MEMORY_LOOKUP_PAGE_SIZE, "offset": offset},
         )
         memories = _memory_items(data)
+        if expected_pages is None:
+            total_count = data.get("totalCount") if isinstance(data, dict) else None
+            if isinstance(total_count, int) and total_count >= 0:
+                expected_pages = max(
+                    1,
+                    (total_count + MEMORY_LOOKUP_PAGE_SIZE - 1)
+                    // MEMORY_LOOKUP_PAGE_SIZE,
+                )
+            elif isinstance(data, dict) and data.get("hasMore"):
+                return None, False
+            else:
+                expected_pages = 1
+
         match = next(
             (
                 memory
@@ -53,10 +73,11 @@ def _find_memory_by_id(
         if match is not None:
             return match, True
 
+        page += 1
         has_more = bool(data.get("hasMore")) if isinstance(data, dict) else False
         if not has_more:
             return None, True
-        if not memories:
+        if not memories or page >= expected_pages:
             return None, False
         offset += len(memories)
 
@@ -108,7 +129,7 @@ def execute_memory(client: MynApiClient, **input_data: Any) -> str:
                 return tool_result(match)
             if not complete:
                 return tool_error(
-                    "Memory lookup reached its 50-page safety cap before completion"
+                    "Memory lookup pagination was inconsistent with totalCount"
                 )
             return tool_error(f"Memory not found: {memory_id}")
 

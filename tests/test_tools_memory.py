@@ -198,16 +198,19 @@ def test_recall_by_id_scans_later_pages_ignoring_list_limit():
         params = dict(request.url.params)
         observed_params.append(params)
         offset = int(params["offset"])
+        memories = (
+            [
+                memory_dto(f"other-{index}", f"Other {index}")
+                for index in range(200)
+            ]
+            if offset == 0
+            else [memory_dto(MEMORY_ID, "Match")]
+        )
         return httpx.Response(
             200,
             json={
-                "memories": [
-                    memory_dto(
-                        "other" if offset == 0 else MEMORY_ID,
-                        "Other" if offset == 0 else "Match",
-                    )
-                ],
-                "totalCount": 2,
+                "memories": memories,
+                "totalCount": 201,
                 "limit": 200,
                 "offset": offset,
                 "hasMore": offset == 0,
@@ -220,9 +223,44 @@ def test_recall_by_id_scans_later_pages_ignoring_list_limit():
 
     assert observed_params == [
         {"limit": "200", "offset": "0"},
-        {"limit": "200", "offset": "1"},
+        {"limit": "200", "offset": "200"},
     ]
     assert result["data"] == memory_dto(MEMORY_ID, "Match")
+
+
+def test_recall_by_id_can_search_beyond_ten_thousand_memories():
+    requests = 0
+    target_id = "target-after-old-cap"
+
+    def transport(request):
+        nonlocal requests
+        requests += 1
+        offset = int(request.url.params["offset"])
+        end = min(offset + 200, 10_001)
+        memories = [
+            {
+                "id": target_id if index == 10_000 else f"other-{index}",
+                "content": f"Memory {index}",
+            }
+            for index in range(offset, end)
+        ]
+        return httpx.Response(
+            200,
+            json={
+                "memories": memories,
+                "totalCount": 10_001,
+                "limit": 200,
+                "offset": offset,
+                "hasMore": end < 10_001,
+            },
+        )
+
+    result = json.loads(
+        build_handler(transport)(action="recall", memoryId=target_id)
+    )
+
+    assert requests == 51
+    assert result["data"]["id"] == target_id
 
 
 def test_recall_by_id_handles_wrapped_response():
