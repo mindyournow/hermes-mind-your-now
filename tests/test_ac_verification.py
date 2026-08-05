@@ -357,23 +357,24 @@ def test_wi7c_ac1_schedule_returns_habits_via_unified_tasks():
     assert result["success"] is True
 
 
-# WI-7d: habits reminders remove AC
-def test_wi7d_ac1_reminders_action_removed_from_schema():
-    """AC: habits action enum and schema drop reminders."""
+# MIN-934: habits reminders restored through unified tasks
+def test_min934_reminders_action_and_fields_are_in_schema():
+    """AC: habits schema advertises reminder reads and writes on task fields."""
     from mind_your_now.tools.habits import HABITS_SCHEMA
 
     props = HABITS_SCHEMA.get("properties", HABITS_SCHEMA.get("parameters", {}).get("properties", {}))
     actions = props["action"]["enum"]
-    assert "reminders" not in actions
-    assert "schedule" in actions
+    assert "reminders" in actions
+    assert "unified task entity" in props["enableReminders"]["description"]
+    assert "unified task entity" in props["reminderTime"]["description"]
 
 
-def test_wi7d_ac2_module_docstring_records_min932_blocking():
-    """AC: Module docstring records restoration blocked on MIN-932 and MIN-883."""
+def test_min934_module_docstring_no_longer_marks_reminders_blocked():
+    """AC: Module documentation describes reminders as a supported habit action."""
     from mind_your_now.tools import habits
 
-    assert "MIN-932" in habits.__doc__
-    assert "MIN-883" in habits.__doc__
+    assert "reminders" in habits.__doc__
+    assert "blocked" not in habits.__doc__
 
 
 # WI-9b: Redact secrets AC
