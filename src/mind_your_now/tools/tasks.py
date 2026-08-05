@@ -55,6 +55,8 @@ ALLOWED_UPDATE_FIELDS = {
     "assignedTo",
     "scheduledAt",
     "dueDate",
+    "reminderEnabled",
+    "reminderTime",
 }
 
 TASKS_SCHEMA = action_schema(

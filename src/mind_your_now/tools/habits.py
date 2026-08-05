@@ -1,8 +1,4 @@
-"""myn_habits: habit tracking, streaks, chains, and schedules.
-
-The reminders action was removed as 404-by-construction. Restoration is blocked on MIN-932
-and cross-references MIN-883.
-"""
+"""myn_habits: habit tracking, streaks, chains, schedules, and reminders."""
 
 from __future__ import annotations
 
@@ -22,7 +18,7 @@ from mind_your_now.tools import (
 
 
 HABITS_SCHEMA = action_schema(
-    ["streaks", "skip", "chains", "schedule"],
+    ["streaks", "skip", "chains", "schedule", "reminders"],
     {
         "habitId": {"type": "string", "format": "uuid"},
         "includeHistory": {"type": "boolean", "default": False},
@@ -39,8 +35,22 @@ HABITS_SCHEMA = action_schema(
             "minimum": 1,
             "description": "Maximum habits to return (schedule action only)",
         },
+        "enableReminders": {
+            "type": "boolean",
+            "description": "Set reminderEnabled on the habit's unified task entity.",
+        },
+        "reminderTime": {
+            "type": "string",
+            "pattern": "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$",
+            "description": "Set reminderTime on the habit's unified task entity.",
+        },
     },
 )
+
+
+def _validate_habit_task(task: Any) -> None:
+    if not isinstance(task, dict) or task.get("taskType") != "HABIT":
+        raise ValueError("habitId must reference a HABIT")
 
 
 def execute_habits(client: MynApiClient, **input_data: Any) -> str:
@@ -99,6 +109,50 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
             result["_collectionComplete"] = False
         return tool_result(result)
 
+    if action == "reminders":
+        habit_id = input_data.get("habitId")
+        if habit_id:
+            enable_reminders = input_data.get("enableReminders")
+            reminder_time = input_data.get("reminderTime")
+            if enable_reminders is not None or reminder_time is not None:
+                updates = {}
+                if enable_reminders is not None:
+                    updates["reminderEnabled"] = enable_reminders
+                if reminder_time is not None:
+                    updates["reminderTime"] = reminder_time
+                return tool_result(
+                    client.guarded_write(
+                        "PATCH",
+                        f"/api/v2/unified-tasks/{habit_id}",
+                        json=updates,
+                        get_path=f"/api/v2/unified-tasks/{habit_id}",
+                        validate_current=_validate_habit_task,
+                    )
+                )
+
+            task = client.get(f"/api/v2/unified-tasks/{habit_id}")
+            _validate_habit_task(task)
+            return tool_result(
+                {
+                    "habitId": habit_id,
+                    "reminderEnabled": bool(task.get("reminderEnabled")),
+                    "reminderTime": task.get("reminderTime"),
+                }
+            )
+
+        data = fetch_all_unified_tasks(client, params={"type": "HABIT"})
+        habits = data.get("tasks", []) if isinstance(data, dict) else data
+        reminders = [
+            {
+                "habitId": task["id"],
+                "title": task.get("title"),
+                "reminderTime": task.get("reminderTime"),
+            }
+            for task in habits
+            if task.get("taskType") == "HABIT" and task.get("reminderEnabled")
+        ]
+        return tool_result({"reminders": reminders})
+
     return tool_error(f"Unknown action: {action}")
 
 
@@ -114,8 +168,8 @@ def register_habits_tool(
         handler=lambda **kwargs: execute_habits(client, **kwargs),
         check_fn=check_fn,
         description=(
-            "Track habits and streaks. Actions: streaks, skip, chains, schedule. "
-            "Reminders are not supported (see MIN-932 and MIN-883)."
+            "Track habits, streaks, and reminders. Actions: streaks, skip, chains, schedule, reminders. "
+            "Reminder settings live on the habit's unified task entity."
         ),
         emoji="🔁",
     )
