@@ -315,7 +315,7 @@ def test_reminders_lists_only_enabled_habits_from_unified_tasks(wrapped):
         (
             "GET",
             "/api/v2/unified-tasks",
-            {"type": "HABIT", "page": "0", "size": "200"},
+            {"type": "HABIT", "limit": "200", "offset": "0"},
         )
     ]
     assert result == {
@@ -351,14 +351,17 @@ def test_reminders_lists_enabled_habit_from_later_server_page():
     }
 
     def transport(request):
-        page = int(request.url.params["page"])
-        observed_pages.append(page)
-        tasks = first_page if page == 0 else [later_reminder]
-        return httpx.Response(200, json={"tasks": tasks})
+        offset = int(request.url.params["offset"])
+        observed_pages.append(offset)
+        tasks = first_page if offset == 0 else [later_reminder]
+        return httpx.Response(
+            200,
+            json={"tasks": tasks, "hasMore": offset == 0, "snapshot": "habit-generation"},
+        )
 
     result = json.loads(build_handler(transport)(action="reminders"))
 
-    assert observed_pages == [0, 1, 0]
+    assert observed_pages == [0, 200]
     assert result["data"]["reminders"] == [
         {
             "habitId": HABIT_ID,
