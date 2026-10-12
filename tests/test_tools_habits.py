@@ -52,11 +52,6 @@ def build_handler(transport):
             "GET",
             f"/api/v2/unified-tasks/{HABIT_ID}/streak",
         ),
-        (
-            {"action": "skip", "habitId": HABIT_ID},
-            "POST",
-            f"/api/v2/unified-tasks/{HABIT_ID}/skip",
-        ),
         ({"action": "chains"}, "GET", "/api/habits/chains"),
         (
             {"action": "chains", "chainId": CHAIN_ID},
@@ -442,3 +437,59 @@ def test_schedule_honors_limit_beyond_first_server_page():
     assert observed_offsets == [0, 200]
     assert len(result["data"]["tasks"]) == 205
     assert result["data"]["_totalCount"] == 210
+
+
+def test_skip_reads_state_hash_then_posts_with_header():
+    observed = []
+
+    def transport(request):
+        observed.append(
+            (
+                request.method,
+                request.url.path,
+                request.headers.get("X-MYN-State-Hash"),
+                json.loads(request.content) if request.content else None,
+            )
+        )
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": HABIT_ID, "stateHash": "habit-hash"})
+        return httpx.Response(200, json={"skipped": True})
+
+    result = json.loads(
+        build_handler(transport)(
+            action="skip",
+            habitId=HABIT_ID,
+            skipDate="2026-10-11",
+            skipReason="travel",
+        )
+    )
+
+    assert observed == [
+        ("GET", f"/api/v2/unified-tasks/{HABIT_ID}", None, None),
+        (
+            "POST",
+            f"/api/v2/unified-tasks/{HABIT_ID}/skip",
+            "habit-hash",
+            {"skipDate": "2026-10-11", "reason": "travel"},
+        ),
+    ]
+    assert result == {"success": True, "data": {"skipped": True}}
+
+
+def test_skip_retries_once_with_current_hash_after_conflict():
+    hashes = []
+
+    def transport(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": HABIT_ID, "stateHash": "stale"})
+        hashes.append(request.headers.get("X-MYN-State-Hash"))
+        if len(hashes) == 1:
+            return httpx.Response(
+                409, json={"error": "stale_state", "currentStateHash": "fresh"}
+            )
+        return httpx.Response(200, json={"skipped": True})
+
+    result = json.loads(build_handler(transport)(action="skip", habitId=HABIT_ID))
+
+    assert hashes == ["stale", "fresh"]
+    assert result["success"] is True

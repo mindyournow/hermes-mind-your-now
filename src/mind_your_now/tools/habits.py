@@ -76,8 +76,14 @@ def execute_habits(client: MynApiClient, **input_data: Any) -> str:
             body["skipDate"] = input_data["skipDate"]
         if input_data.get("skipReason"):
             body["reason"] = input_data["skipReason"]
+        # MIN-740: skip requires the task's X-MYN-State-Hash for agent callers.
         return tool_result(
-            client.post(f"/api/v2/unified-tasks/{habit_id}/skip", body)
+            client.guarded_write(
+                "POST",
+                f"/api/v2/unified-tasks/{habit_id}/skip",
+                json=body,
+                get_path=f"/api/v2/unified-tasks/{habit_id}",
+            )
         )
 
     if action == "chains":

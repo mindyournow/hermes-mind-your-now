@@ -18,6 +18,11 @@ PREFERENCE_ENDPOINTS = {
     "coaching-intensity": "/api/v1/customers/coaching-intensity",
     "theme-preference": "/api/v1/customers/theme-preference",
 }
+# MIN-740: the API requires X-MYN-State-Hash from agents on these customer writes.
+# The customer stateHash is only returned by GET /api/v1/customers/goals, and it
+# covers goals plus every preference, so all guarded writes read it from there.
+CUSTOMER_STATE_PATH = "/api/v1/customers/goals"
+STATE_HASH_PREFERENCE_KEYS = {"notification-preferences", "theme-preference"}
 
 PROFILE_SCHEMA = action_schema(
     ["get_info", "get_goals", "update_goals", "preferences"],
@@ -82,9 +87,11 @@ def execute_profile(client: MynApiClient, **input_data: Any) -> str:
                 line += f"\n  Target: {_escape_markdown(str(goal['targetDate']))}"
             lines.append(line)
         return tool_result(
-            client.put(
+            client.guarded_write(
+                "PUT",
                 "/api/v1/customers/goals",
-                {"goalsAndAmbitions": "\n".join(lines)},
+                json={"goalsAndAmbitions": "\n".join(lines)},
+                get_path=CUSTOMER_STATE_PATH,
             )
         )
 
@@ -98,7 +105,17 @@ def execute_profile(client: MynApiClient, **input_data: Any) -> str:
                     f"{', '.join(PREFERENCE_ENDPOINTS)}"
                 )
             if "preferenceValue" in input_data:
-                return tool_result(client.put(endpoint, input_data["preferenceValue"]))
+                value = input_data["preferenceValue"]
+                if key in STATE_HASH_PREFERENCE_KEYS:
+                    return tool_result(
+                        client.guarded_write(
+                            "PUT",
+                            endpoint,
+                            json=value,
+                            get_path=CUSTOMER_STATE_PATH,
+                        )
+                    )
+                return tool_result(client.put(endpoint, value))
             return tool_result(client.get(endpoint))
 
         preferences = {}

@@ -46,11 +46,6 @@ def build_handler(transport):
         ({"action": "get_info"}, "GET", "/api/v1/customers"),
         ({"action": "get_goals"}, "GET", "/api/v1/customers/goals"),
         (
-            {"action": "update_goals", "goals": [{"title": "Ship plugin"}]},
-            "PUT",
-            "/api/v1/customers/goals",
-        ),
-        (
             {"action": "preferences", "preferenceKey": "theme-preference"},
             "GET",
             "/api/v1/customers/theme-preference",
@@ -76,6 +71,8 @@ def test_update_goals_formats_and_escapes_markdown():
 
     def transport(request):
         nonlocal observed_body
+        if request.method == "GET":
+            return httpx.Response(200, json={"stateHash": "customer-hash"})
         observed_body = json.loads(request.content)
         return httpx.Response(200, json={"status": "ok"})
 
@@ -131,3 +128,75 @@ def test_preferences_update_and_fetch_all():
         "coaching-intensity",
         "theme-preference",
     }
+
+
+def test_update_goals_reads_customer_state_hash_before_put():
+    observed = []
+
+    def transport(request):
+        observed.append(
+            (request.method, request.url.path, request.headers.get("X-MYN-State-Hash"))
+        )
+        if request.method == "GET":
+            return httpx.Response(200, json={"goalsAndAmbitions": "", "stateHash": "c1"})
+        return httpx.Response(200, json={"status": "ok"})
+
+    result = json.loads(
+        build_handler(transport)(action="update_goals", goals=[{"title": "Ship plugin"}])
+    )
+
+    assert observed == [
+        ("GET", "/api/v1/customers/goals", None),
+        ("PUT", "/api/v1/customers/goals", "c1"),
+    ]
+    assert result == {"success": True, "data": {"status": "ok"}}
+
+
+@pytest.mark.parametrize(
+    "preference_key", ["notification-preferences", "theme-preference"]
+)
+def test_guarded_preference_writes_use_customer_state_hash(preference_key):
+    observed = []
+
+    def transport(request):
+        observed.append(
+            (request.method, request.url.path, request.headers.get("X-MYN-State-Hash"))
+        )
+        if request.method == "GET":
+            return httpx.Response(200, json={"stateHash": "c2"})
+        return httpx.Response(200, json={"saved": True})
+
+    result = json.loads(
+        build_handler(transport)(
+            action="preferences",
+            preferenceKey=preference_key,
+            preferenceValue={"enabled": True},
+        )
+    )
+
+    assert observed == [
+        ("GET", "/api/v1/customers/goals", None),
+        ("PUT", f"/api/v1/customers/{preference_key}", "c2"),
+    ]
+    assert result["success"] is True
+
+
+def test_customer_write_retries_once_after_stale_state_conflict():
+    hashes = []
+
+    def transport(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"stateHash": "old"})
+        hashes.append(request.headers.get("X-MYN-State-Hash"))
+        if len(hashes) == 1:
+            return httpx.Response(
+                409, json={"error": "stale_state", "currentStateHash": "new"}
+            )
+        return httpx.Response(200, json={"status": "ok"})
+
+    result = json.loads(
+        build_handler(transport)(action="update_goals", goals=[{"title": "Ship"}])
+    )
+
+    assert hashes == ["old", "new"]
+    assert result["success"] is True
