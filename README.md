@@ -78,7 +78,7 @@ All tools use the Hermes toolset `mind-your-now`.
 
 | Tool | Actions |
 |---|---|
-| `myn_tasks` | `list`, `get`, `create`, `update`, `complete`, `archive`, `search`, `share`, `list_shares`, `revoke_share`, `respond_share`, `shared_with_me` |
+| `myn_tasks` | `list`, `get`, `create`, `update`, `complete`, `archive`, `search`, `share`, `list_shares`, `revoke_share`, `respond_share`, `shared_with_me`, `create_plan`, `plan`, `add_steps`, `reorder_steps` |
 | `myn_debrief` | `status`, `generate`, `get`, `apply_correction`, `complete_session` |
 | `myn_calendar` | `list_calendars`, `list_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `move_event`, `meetings` (use `startTime`/`endTime` for create/update, not `startDateTime`) |
 | `myn_habits` | `streaks`, `skip`, `chains`, `schedule`, `reminders` |
@@ -102,6 +102,13 @@ All tools use the Hermes toolset `mind-your-now`.
 - Each recipient gets a notification (push and in-app inbox) and must accept the share. Confirm recipients with the user before sharing, and call `list_shares` first to avoid sharing twice.
 - Only the task owner can `share`, `list_shares`, or `revoke_share`. Chores, habits, recurring tasks, and completed or archived tasks cannot be shared.
 - `shared_with_me` lists pending and accepted shares sent to the user; `respond_share` accepts or declines a pending one.
+
+**Plans: one task with ordered steps.** A multi-step effort (a move, a trip, a launch) is one plan task whose steps are done in order, not a pile of separate tasks. MYN shows a plan as one item, in the zone and on the date of its current step (the first step not done), and never lists its steps on their own.
+
+- `create_plan` takes a `title` and `steps` in order (each a `title` with optional `startDate` and `priority`, defaulting to the plan's). Pass `stepIds` to group tasks the user already has.
+- `plan` (with `taskId` set to the plan or any of its steps) returns every step in order and `currentStep`, the answer to "what's next".
+- `add_steps` appends `steps` and/or moves `stepIds` into the plan; `reorder_steps` takes `stepIds` in the new order.
+- `update` with `parentTaskId` and `position` moves one task into a plan; `parentTaskId: ""` takes it out. Every write to an existing task goes through the read-before-write state hash (`X-MYN-State-Hash`).
 
 Timers created through `myn_timers` include `sourceAgentName` and `sourceChannel`, so MYN can attribute reminders to the Hermes agent that created them.
 

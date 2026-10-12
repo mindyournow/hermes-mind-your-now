@@ -57,11 +57,16 @@ ALLOWED_UPDATE_FIELDS = {
     "dueDate",
     "reminderEnabled",
     "reminderTime",
+    # MIN-1085: plans. parentTaskId moves a task into a plan ("" takes it out);
+    # position orders the plan's steps.
+    "parentTaskId",
+    "position",
 }
 
 SHARE_TYPES = ["VIEW", "EDIT", "DELEGATE"]
 SHARE_RESPONSES = ["ACCEPT", "DECLINE"]
 SHARE_ACTIONS = {"share", "list_shares", "revoke_share", "respond_share"}
+PLAN_ACTIONS = {"plan", "add_steps", "reorder_steps"}
 
 TASKS_SCHEMA = action_schema(
     [
@@ -77,6 +82,10 @@ TASKS_SCHEMA = action_schema(
         "revoke_share",
         "respond_share",
         "shared_with_me",
+        "create_plan",
+        "plan",
+        "add_steps",
+        "reorder_steps",
     ],
     {
         "status": {"type": "string", "enum": TASK_STATUSES},
@@ -161,6 +170,42 @@ TASKS_SCHEMA = action_schema(
         "note": {
             "type": "string",
             "description": "For respond_share: optional note explaining the response.",
+        },
+        "parentTaskId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "For create: make the new task a step of this plan (a task id).",
+        },
+        "position": {
+            "type": "integer",
+            "description": "For create: the step's place in its plan (0 is first).",
+        },
+        "steps": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "description": (
+                "For create_plan/add_steps: new steps in the order they happen. Each has a title and "
+                "optional startDate (YYYY-MM-DD) and priority; both default to the plan's."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "startDate": {"type": "string", "format": "date"},
+                    "priority": {"type": "string", "enum": PRIORITIES},
+                },
+                "required": ["title"],
+            },
+        },
+        "stepIds": {
+            "type": "array",
+            "items": {"type": "string", "format": "uuid"},
+            "description": (
+                "For create_plan/add_steps: existing task ids to move into the plan as steps, in order. "
+                "For reorder_steps: the plan's step ids in the new order (steps left out keep their "
+                "order after these)."
+            ),
         },
     },
 )
@@ -326,7 +371,7 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
             result["_collectionComplete"] = False
         return tool_result(result)
 
-    if action in {"get", "update", "complete", "archive", *SHARE_ACTIONS}:
+    if action in {"get", "update", "complete", "archive", *SHARE_ACTIONS, *PLAN_ACTIONS}:
         task_id = input_data.get("taskId")
         if not task_id:
             return tool_error(f"taskId is required for {action} action")
@@ -361,9 +406,11 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
             "priority": input_data["priority"],
             "startDate": input_data["startDate"],
         }
-        for field in ("description", "duration", "projectId", "recurrenceRule"):
+        for field in ("description", "duration", "projectId", "recurrenceRule", "parentTaskId"):
             if input_data.get(field):
                 body[field] = input_data[field]
+        if type(input_data.get("position")) is int:
+            body["position"] = input_data["position"]
         auto_scheduled = input_data.get("isAutoScheduled")
         if auto_scheduled is None:
             auto_scheduled = input_data.get("autoScheduleEnabled")
@@ -475,6 +522,38 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
             data = {"taskId": task_id, "response": response}
         return tool_result(data)
 
+    if action == "create_plan":
+        return _create_plan(client, input_data)
+
+    if action == "plan":
+        return tool_result(client.get(f"/api/v2/unified-tasks/{task_id}/plan"))
+
+    if action == "add_steps":
+        error = _attach_steps(client, task_id, input_data)
+        if error:
+            return tool_error(error)
+        return tool_result(client.get(f"/api/v2/unified-tasks/{task_id}/plan"))
+
+    if action == "reorder_steps":
+        step_ids = input_data.get("stepIds")
+        if not isinstance(step_ids, list) or not step_ids:
+            return tool_error("stepIds is required for reorder_steps action")
+        plan = client.get(f"/api/v2/unified-tasks/{task_id}/plan")
+        current = [step.get("id") for step in (plan or {}).get("steps", [])]
+        unknown = [step_id for step_id in step_ids if step_id not in current]
+        if unknown:
+            return tool_error(f"Not steps of this plan: {', '.join(unknown)}")
+        order = list(dict.fromkeys(step_ids)) + [s for s in current if s not in step_ids]
+        for position, step_id in enumerate(order):
+            if current.index(step_id) != position:
+                client.guarded_write(
+                    "PATCH",
+                    f"/api/v2/unified-tasks/{step_id}",
+                    json={"position": position},
+                    get_path=f"/api/v2/unified-tasks/{step_id}",
+                )
+        return tool_result(client.get(f"/api/v2/unified-tasks/{task_id}/plan"))
+
     if action == "shared_with_me":
         return tool_result(client.get("/api/v2/unified-tasks/shared-with-me"))
 
@@ -492,6 +571,76 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
     return tool_error(f"Unknown action: {action}")
 
 
+def _attach_steps(client: MynApiClient, plan_id: str, input_data: dict[str, Any]) -> str | None:
+    """Append new steps, then existing tasks moved in, after the plan's last step."""
+    steps = input_data.get("steps") or []
+    moved = input_data.get("stepIds") or []
+    if not isinstance(steps, list) or not isinstance(moved, list) or not (steps or moved):
+        return "steps or stepIds is required"
+    for step in steps:
+        if not isinstance(step, dict) or not step.get("title"):
+            return "every step needs a title"
+    for step_id in moved:
+        uuid_error = _valid_uuid(step_id, "stepIds entry")
+        if uuid_error:
+            return uuid_error
+
+    plan_task = client.get(f"/api/v2/unified-tasks/{plan_id}")
+    existing = client.get(f"/api/v2/unified-tasks/{plan_id}/plan") or {}
+    position = len(existing.get("steps", []))
+    for step in steps:
+        client.post(
+            "/api/v2/unified-tasks",
+            {
+                "id": str(uuid.uuid4()),
+                "title": step["title"],
+                "taskType": "TASK",
+                "priority": step.get("priority") or plan_task.get("priority") or "OPPORTUNITY_NOW",
+                "startDate": step.get("startDate") or plan_task.get("startDate") or date.today().isoformat(),
+                "isAutoScheduled": False,
+                "parentTaskId": plan_id,
+                "position": position,
+            },
+        )
+        position += 1
+    for step_id in moved:
+        client.guarded_write(
+            "PATCH",
+            f"/api/v2/unified-tasks/{step_id}",
+            json={"parentTaskId": plan_id, "position": position},
+            get_path=f"/api/v2/unified-tasks/{step_id}",
+        )
+        position += 1
+    return None
+
+
+def _create_plan(client: MynApiClient, input_data: dict[str, Any]) -> str:
+    """One plan task, then its steps in order (MIN-1085)."""
+    if not input_data.get("title"):
+        return tool_error("title is required for create_plan action")
+    steps = input_data.get("steps") or []
+    if not steps and not input_data.get("stepIds"):
+        return tool_error("create_plan needs steps or stepIds")
+    first = steps[0] if steps and isinstance(steps[0], dict) else {}
+    plan_id = input_data.get("id") or str(uuid.uuid4())
+    client.post(
+        "/api/v2/unified-tasks",
+        {
+            "id": plan_id,
+            "title": input_data["title"],
+            "taskType": "TASK",
+            "priority": input_data.get("priority") or first.get("priority") or "OPPORTUNITY_NOW",
+            "startDate": input_data.get("startDate") or first.get("startDate") or date.today().isoformat(),
+            "isAutoScheduled": False,
+            **({"description": input_data["description"]} if input_data.get("description") else {}),
+        },
+    )
+    error = _attach_steps(client, plan_id, input_data)
+    if error:
+        return tool_error(error)
+    return tool_result(client.get(f"/api/v2/unified-tasks/{plan_id}/plan"))
+
+
 def register_tasks_tool(
     ctx: Any,
     client: MynApiClient,
@@ -505,7 +654,14 @@ def register_tasks_tool(
         check_fn=check_fn,
         description=(
             "Manage tasks, habits, and chores. Actions: list, get, create, update, complete, archive, search, "
-            "share, list_shares, revoke_share, respond_share, shared_with_me. "
+            "share, list_shares, revoke_share, respond_share, shared_with_me, create_plan, plan, add_steps, "
+            "reorder_steps. "
+            "PLANS: a multi-step effort (a move, a trip, a launch) is ONE plan task whose steps are done in "
+            "order, not a pile of tasks. create_plan takes a title and steps in order (and/or stepIds of existing "
+            "tasks to group). The plan shows as one item in the zone and on the date of its current step (the "
+            "first step not done). plan (taskId = the plan or any step) answers \"what's next\": currentStep. "
+            "add_steps appends steps; reorder_steps takes stepIds in the new order. update with parentTaskId "
+            "and position also moves a single task into a plan; parentTaskId \"\" takes it out. "
             "SHARING: share gives specific household members access to one task and sends each recipient a "
             "notification (push + inbox), so confirm the recipients with the user first and call list_shares "
             "to avoid re-sharing. memberIds are household member ids from myn_household members. Being in the "

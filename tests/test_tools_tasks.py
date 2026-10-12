@@ -39,6 +39,8 @@ EXPECTED_ALLOWED_UPDATE_FIELDS = {
     "dueDate",
     "reminderEnabled",
     "reminderTime",
+    "parentTaskId",
+    "position",
 }
 
 
@@ -640,3 +642,115 @@ def test_share_api_error_is_surfaced():
 
     assert result["success"] is False
     assert "Chores cannot be shared" in result["error"]
+
+
+PLAN_ID = "22222222-2222-4222-8222-222222222222"
+STEP_A = "33333333-3333-4333-8333-333333333333"
+STEP_B = "44444444-4444-4444-8444-444444444444"
+
+
+def plan_body(step_ids):
+    return {
+        "planId": PLAN_ID,
+        "title": "Bothell move",
+        "stepsDone": 0,
+        "stepsTotal": len(step_ids),
+        "currentStep": {"id": step_ids[0], "title": "first"} if step_ids else None,
+        "steps": [{"step": i + 1, "id": sid, "title": sid} for i, sid in enumerate(step_ids)],
+    }
+
+
+def test_create_plan_creates_the_plan_then_each_step_in_order():
+    posts = []
+
+    def transport(request):
+        if request.method == "POST":
+            posts.append(json.loads(request.content))
+            return httpx.Response(201, json=posts[-1])
+        if request.url.path.endswith("/plan"):
+            return httpx.Response(200, json=plan_body([]))
+        return httpx.Response(200, json={"id": PLAN_ID, "priority": "CRITICAL", "startDate": "2026-10-12"})
+
+    result = json.loads(
+        build_handler(transport)(
+            action="create_plan",
+            id=PLAN_ID,
+            title="Bothell move",
+            steps=[{"title": "Book the movers", "startDate": "2026-10-13"}, {"title": "Pack the kitchen"}],
+        )
+    )
+
+    assert result["success"] is True
+    assert posts[0]["id"] == PLAN_ID and posts[0]["title"] == "Bothell move"
+    assert [(p["title"], p["parentTaskId"], p["position"]) for p in posts[1:]] == [
+        ("Book the movers", PLAN_ID, 0),
+        ("Pack the kitchen", PLAN_ID, 1),
+    ]
+    assert posts[1]["startDate"] == "2026-10-13"
+    assert posts[2]["startDate"] == "2026-10-12"  # the plan's day
+    assert posts[2]["priority"] == "CRITICAL"
+
+
+def test_add_steps_moves_existing_tasks_in_with_a_state_hash():
+    writes = []
+
+    def transport(request):
+        if request.method == "PATCH":
+            writes.append((request.url.path, request.headers.get("X-MYN-State-Hash"), json.loads(request.content)))
+            return httpx.Response(200, json={})
+        if request.url.path.endswith("/plan"):
+            return httpx.Response(200, json=plan_body([STEP_A]))
+        return httpx.Response(200, json={"id": STEP_B, "stateHash": "hash-v1"})
+
+    result = json.loads(
+        build_handler(transport)(action="add_steps", taskId=PLAN_ID, stepIds=[STEP_B])
+    )
+
+    assert result["success"] is True
+    assert writes == [
+        (f"/api/v2/unified-tasks/{STEP_B}", "hash-v1", {"parentTaskId": PLAN_ID, "position": 1})
+    ]
+
+
+def test_plan_reads_the_current_step():
+    def transport(request):
+        assert request.url.path == f"/api/v2/unified-tasks/{STEP_A}/plan"
+        return httpx.Response(200, json=plan_body([STEP_A, STEP_B]))
+
+    result = json.loads(build_handler(transport)(action="plan", taskId=STEP_A))
+
+    assert result["data"]["currentStep"]["id"] == STEP_A
+
+
+def test_reorder_steps_patches_only_moved_steps():
+    writes = []
+
+    def transport(request):
+        if request.method == "PATCH":
+            writes.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(200, json={})
+        if request.url.path.endswith("/plan"):
+            return httpx.Response(200, json=plan_body([STEP_A, STEP_B]))
+        return httpx.Response(200, json={"stateHash": "hash-v1"})
+
+    result = json.loads(
+        build_handler(transport)(action="reorder_steps", taskId=PLAN_ID, stepIds=[STEP_B])
+    )
+
+    assert result["success"] is True
+    assert writes == [
+        (f"/api/v2/unified-tasks/{STEP_B}", {"position": 0}),
+        (f"/api/v2/unified-tasks/{STEP_A}", {"position": 1}),
+    ]
+
+
+def test_reorder_steps_rejects_a_task_outside_the_plan():
+    def transport(request):
+        return httpx.Response(200, json=plan_body([STEP_A]))
+
+    result = json.loads(
+        build_handler(transport)(action="reorder_steps", taskId=PLAN_ID, stepIds=[STEP_B])
+    )
+
+    assert result["success"] is False
+    assert "Not steps of this plan" in result["error"]
