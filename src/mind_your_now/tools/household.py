@@ -120,7 +120,9 @@ def register_household_tool(
         check_fn=check_fn,
         description=(
             "Manage household members, invites, and chores. Actions: members, "
-            "invite, chores, chore_schedule, chore_complete."
+            "invite, chores, chore_schedule, chore_complete. Household membership does not give "
+            "anyone access to the user's tasks; to give a member access to a task, pass the member's "
+            "id from members to myn_tasks share."
         ),
         emoji="🏠",
     )

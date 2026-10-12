@@ -20,10 +20,10 @@ The matching names and action vocabulary let prompts and examples move between H
 
 ### GitHub release wheel
 
-The package is not currently published on PyPI. Install the verified v0.1.4 wheel directly from GitHub Releases:
+The package is not currently published on PyPI. Install the v0.2.0 wheel directly from GitHub Releases:
 
 ```bash
-python -m pip install https://github.com/mindyournow/hermes-mind-your-now/releases/download/v0.1.4/hermes_mind_your_now-0.1.4-py3-none-any.whl
+python -m pip install https://github.com/mindyournow/hermes-mind-your-now/releases/download/v0.2.0/hermes_mind_your_now-0.2.0-py3-none-any.whl
 hermes plugins enable mind-your-now
 hermes plugins list --json
 ```
@@ -172,8 +172,8 @@ For `hermes-eltmon`, build and upload a wheel to the persistent volume:
 
 ```bash
 python -m build
-fly sftp put -a hermes-eltmon dist/hermes_mind_your_now-0.1.4-py3-none-any.whl /opt/data/plugins/hermes_mind_your_now-0.1.4-py3-none-any.whl
-fly ssh console -a hermes-eltmon -s -C "sh -lc 'mkdir -p /opt/data/python-pkgs; chown -R hermes:hermes /opt/data/plugins /opt/data/python-pkgs; su hermes -s /bin/sh -c \"uv pip install --python /opt/hermes/.venv/bin/python --target /opt/data/python-pkgs --no-deps --reinstall /opt/data/plugins/hermes_mind_your_now-0.1.4-py3-none-any.whl\"'"
+fly sftp put -a hermes-eltmon dist/hermes_mind_your_now-0.2.0-py3-none-any.whl /opt/data/plugins/hermes_mind_your_now-0.2.0-py3-none-any.whl
+fly ssh console -a hermes-eltmon -s -C "sh -lc 'mkdir -p /opt/data/python-pkgs; chown -R hermes:hermes /opt/data/plugins /opt/data/python-pkgs; su hermes -s /bin/sh -c \"uv pip install --python /opt/hermes/.venv/bin/python --target /opt/data/python-pkgs --no-deps --reinstall /opt/data/plugins/hermes_mind_your_now-0.2.0-py3-none-any.whl\"'"
 fly secrets set -a hermes-eltmon PYTHONPATH=/opt/data/python-pkgs
 fly secrets set -a hermes-eltmon MYN_API_KEY='myn_...'
 ```
