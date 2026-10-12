@@ -13,12 +13,17 @@ All 14 MYN tools emit complete OpenAI function objects with `name`, `description
 
 Writes to the MYN API use the state-hash protocol (MIN-740): read the current state, send the write with an `X-MYN-State-Hash` header, and retry once on 409 conflict using the hash from the error body. This prevents concurrent-write anomalies where a stale value overwrites a fresher one.
 
-Guarded endpoints:
-- Tasks: `update`, `complete`, `archive`
+Guarded endpoints (every API route annotated `@RequireStateHash` that the plugin calls):
+- Tasks: `update`, `complete`, `archive` (hash from `GET /api/v2/unified-tasks/{id}`)
+- Habits: `skip`, reminder updates (hash from the habit's unified-task read)
+- Projects: `move_task`
+- Profile: `update_goals`, and `preferences` writes to `notification-preferences` and `theme-preference`. The customer hash is only returned by `GET /api/v1/customers/goals`, so these writes read it there.
 - Timers: `cancel`, `snooze`
 - Debrief: `apply_correction`, `complete_session`
 - Household: `chore_complete`
-- Calendar: implicit (operations use /standalone-events which gates internally)
+- Calendar: not guarded. The plugin deletes through `/standalone-events/{id}`, which has no state-hash contract (see the limits below).
+
+Task sharing (`share`, `revoke_share`, `respond_share`) is not state-hash guarded by the API. `share` notifies every recipient, so agents must confirm recipients with the user first.
 
 **Files:**
 - `src/mind_your_now/client.py` (guarded_write, _write_with_hash, _hash_from_conflict)
@@ -79,7 +84,7 @@ The following improvements are blocked by MIN-932 (scoped planning and search):
 - Item-scoped dryRun for bulk list operations
 - Planning engine-decision preview for dryRun
 
-The habits `reminders` action was removed; restoration is blocked on MIN-932 and cross-references MIN-883.
+The habits `reminders` action lists enabled reminders from paged unified-task reads and updates them through guarded writes (MIN-934).
 
 Project graph scoping is tracked as MIN-933.
 

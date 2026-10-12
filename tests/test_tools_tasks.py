@@ -478,3 +478,165 @@ def test_list_rejects_invalid_pagination_before_request(field, value, message):
 
     assert result["success"] is False
     assert result["error"] == message
+
+
+# ---- Task sharing ----
+
+MEMBER_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+MEMBER_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+
+def _recording_transport(observed, response=None, status=200):
+    def transport(request):
+        observed.append(
+            (
+                request.method,
+                request.url.path,
+                json.loads(request.content) if request.content else None,
+            )
+        )
+        if response is None:
+            return httpx.Response(status)
+        return httpx.Response(status, json=response)
+
+    return transport
+
+
+def test_share_posts_member_ids_share_type_and_message():
+    observed = []
+    handler = build_handler(_recording_transport(observed, {"status": "PENDING"}))
+
+    result = json.loads(
+        handler(
+            action="share",
+            taskId=TASK_ID,
+            memberIds=[MEMBER_A, MEMBER_B, MEMBER_A],
+            shareType="view",
+            message="Can you pick this up?",
+        )
+    )
+
+    assert observed == [
+        (
+            "POST",
+            f"/api/v2/unified-tasks/{TASK_ID}/share",
+            {
+                "member_ids": [MEMBER_A, MEMBER_B],
+                "share_type": "VIEW",
+                "message": "Can you pick this up?",
+            },
+        )
+    ]
+    assert result == {"success": True, "data": {"status": "PENDING"}}
+
+
+def test_share_defaults_to_edit_like_the_app():
+    observed = []
+    handler = build_handler(_recording_transport(observed, {}))
+
+    handler(action="share", taskId=TASK_ID, memberIds=[MEMBER_A])
+
+    assert observed[0][2] == {"member_ids": [MEMBER_A], "share_type": "EDIT"}
+
+
+@pytest.mark.parametrize(
+    ("input_data", "message"),
+    [
+        ({"action": "share", "memberIds": [MEMBER_A]}, "taskId is required"),
+        ({"action": "share", "taskId": TASK_ID}, "memberIds is required"),
+        ({"action": "share", "taskId": TASK_ID, "memberIds": []}, "memberIds is required"),
+        (
+            {"action": "share", "taskId": TASK_ID, "memberIds": ["42"]},
+            "memberIds entry must be a valid UUID",
+        ),
+        (
+            {"action": "share", "taskId": TASK_ID, "memberIds": [MEMBER_A], "shareType": "OWN"},
+            "shareType must be one of VIEW, EDIT, DELEGATE",
+        ),
+        ({"action": "revoke_share", "taskId": TASK_ID}, "memberId is required"),
+        (
+            {"action": "revoke_share", "taskId": TASK_ID, "memberId": "nope"},
+            "memberId must be a valid UUID",
+        ),
+        ({"action": "respond_share", "taskId": TASK_ID}, "ACCEPT or DECLINE"),
+        (
+            {"action": "respond_share", "taskId": TASK_ID, "response": "MAYBE"},
+            "ACCEPT or DECLINE",
+        ),
+        ({"action": "list_shares"}, "taskId is required"),
+    ],
+)
+def test_share_actions_validate_before_calling_api(input_data, message):
+    observed = []
+    result = json.loads(build_handler(_recording_transport(observed, {}))(**input_data))
+
+    assert observed == []
+    assert result["success"] is False
+    assert message in result["error"]
+
+
+def test_list_shares_and_shared_with_me_use_get():
+    observed = []
+    handler = build_handler(_recording_transport(observed, []))
+
+    handler(action="list_shares", taskId=TASK_ID)
+    handler(action="shared_with_me")
+
+    assert observed == [
+        ("GET", f"/api/v2/unified-tasks/{TASK_ID}/shares", None),
+        ("GET", "/api/v2/unified-tasks/shared-with-me", None),
+    ]
+
+
+def test_revoke_share_deletes_member_share_and_reports_success_on_204():
+    observed = []
+    handler = build_handler(_recording_transport(observed, None, status=204))
+
+    result = json.loads(handler(action="revoke_share", taskId=TASK_ID, memberId=MEMBER_A))
+
+    assert observed == [("DELETE", f"/api/v2/unified-tasks/{TASK_ID}/share/{MEMBER_A}", None)]
+    assert result == {
+        "success": True,
+        "data": {"revoked": True, "taskId": TASK_ID, "memberId": MEMBER_A},
+    }
+
+
+def test_respond_share_accepts_with_note():
+    observed = []
+    handler = build_handler(_recording_transport(observed, {"status": "ACCEPTED"}))
+
+    result = json.loads(
+        handler(action="respond_share", taskId=TASK_ID, response="accept", note="On it")
+    )
+
+    assert observed == [
+        (
+            "POST",
+            f"/api/v2/unified-tasks/{TASK_ID}/share/respond",
+            {"response": "ACCEPT", "note": "On it"},
+        )
+    ]
+    assert result == {"success": True, "data": {"status": "ACCEPTED"}}
+
+
+def test_respond_share_decline_with_empty_body_reports_outcome():
+    observed = []
+    handler = build_handler(_recording_transport(observed, None))
+
+    result = json.loads(handler(action="respond_share", taskId=TASK_ID, response="DECLINE"))
+
+    assert result == {"success": True, "data": {"taskId": TASK_ID, "response": "DECLINE"}}
+
+
+def test_share_api_error_is_surfaced():
+    observed = []
+    handler = build_handler(
+        _recording_transport(
+            observed, {"message": "Chores cannot be shared - they are household-specific"}, 400
+        )
+    )
+
+    result = json.loads(handler(action="share", taskId=TASK_ID, memberIds=[MEMBER_A]))
+
+    assert result["success"] is False
+    assert "Chores cannot be shared" in result["error"]

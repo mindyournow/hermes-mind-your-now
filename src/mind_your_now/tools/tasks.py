@@ -59,8 +59,25 @@ ALLOWED_UPDATE_FIELDS = {
     "reminderTime",
 }
 
+SHARE_TYPES = ["VIEW", "EDIT", "DELEGATE"]
+SHARE_RESPONSES = ["ACCEPT", "DECLINE"]
+SHARE_ACTIONS = {"share", "list_shares", "revoke_share", "respond_share"}
+
 TASKS_SCHEMA = action_schema(
-    ["list", "get", "create", "update", "complete", "archive", "search"],
+    [
+        "list",
+        "get",
+        "create",
+        "update",
+        "complete",
+        "archive",
+        "search",
+        "share",
+        "list_shares",
+        "revoke_share",
+        "respond_share",
+        "shared_with_me",
+    ],
     {
         "status": {"type": "string", "enum": TASK_STATUSES},
         "priority": {"type": "string", "enum": PRIORITIES},
@@ -108,6 +125,43 @@ TASKS_SCHEMA = action_schema(
         "updates": {"type": "object", "additionalProperties": True},
         "query": {"type": "string"},
         "includeArchived": {"type": "boolean", "default": False},
+        "memberIds": {
+            "type": "array",
+            "items": {"type": "string", "format": "uuid"},
+            "minItems": 1,
+            "description": (
+                "For share: household member IDs (the `id` field from myn_household members, "
+                "not customerId) to share the task with."
+            ),
+        },
+        "memberId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "For revoke_share: the household member ID whose access to remove.",
+        },
+        "shareType": {
+            "type": "string",
+            "enum": SHARE_TYPES,
+            "default": "EDIT",
+            "description": (
+                "For share: VIEW = read-only, EDIT = can view and modify (default, as in the MYN app), "
+                "DELEGATE = transfers ownership of the task to the recipient."
+            ),
+        },
+        "message": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "For share: optional note included in the recipient's notification.",
+        },
+        "response": {
+            "type": "string",
+            "enum": SHARE_RESPONSES,
+            "description": "For respond_share: ACCEPT or DECLINE a pending share sent to the user.",
+        },
+        "note": {
+            "type": "string",
+            "description": "For respond_share: optional note explaining the response.",
+        },
     },
 )
 
@@ -272,7 +326,7 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
             result["_collectionComplete"] = False
         return tool_result(result)
 
-    if action in {"get", "update", "complete", "archive"}:
+    if action in {"get", "update", "complete", "archive", *SHARE_ACTIONS}:
         task_id = input_data.get("taskId")
         if not task_id:
             return tool_error(f"taskId is required for {action} action")
@@ -372,6 +426,58 @@ def execute_tasks(client: MynApiClient, **input_data: Any) -> str:
             )
         )
 
+    if action == "share":
+        member_ids = input_data.get("memberIds")
+        if isinstance(member_ids, str):
+            member_ids = [member_ids]
+        if not isinstance(member_ids, list) or not member_ids:
+            return tool_error(
+                "memberIds is required for share action. Use myn_household members and pass "
+                "each member's id (not customerId)."
+            )
+        for member_id in member_ids:
+            uuid_error = _valid_uuid(member_id, "memberIds entry")
+            if uuid_error:
+                return tool_error(uuid_error)
+        share_type = str(input_data.get("shareType") or "EDIT").upper()
+        if share_type not in SHARE_TYPES:
+            return tool_error(f"shareType must be one of {', '.join(SHARE_TYPES)}")
+        body: dict[str, Any] = {
+            "member_ids": list(dict.fromkeys(member_ids)),
+            "share_type": share_type,
+        }
+        if input_data.get("message"):
+            body["message"] = input_data["message"]
+        return tool_result(client.post(f"/api/v2/unified-tasks/{task_id}/share", body))
+
+    if action == "list_shares":
+        return tool_result(client.get(f"/api/v2/unified-tasks/{task_id}/shares"))
+
+    if action == "revoke_share":
+        member_id = input_data.get("memberId")
+        if not member_id:
+            return tool_error("memberId is required for revoke_share action")
+        uuid_error = _valid_uuid(member_id, "memberId")
+        if uuid_error:
+            return tool_error(uuid_error)
+        client.delete(f"/api/v2/unified-tasks/{task_id}/share/{member_id}")
+        return tool_result({"revoked": True, "taskId": task_id, "memberId": member_id})
+
+    if action == "respond_share":
+        response = str(input_data.get("response") or "").upper()
+        if response not in SHARE_RESPONSES:
+            return tool_error("response is required for respond_share action (ACCEPT or DECLINE)")
+        body = {"response": response}
+        if input_data.get("note"):
+            body["note"] = input_data["note"]
+        data = client.post(f"/api/v2/unified-tasks/{task_id}/share/respond", body)
+        if data is None:
+            data = {"taskId": task_id, "response": response}
+        return tool_result(data)
+
+    if action == "shared_with_me":
+        return tool_result(client.get("/api/v2/unified-tasks/shared-with-me"))
+
     if action == "search":
         params = {}
         if input_data.get("query"):
@@ -398,7 +504,14 @@ def register_tasks_tool(
         handler=lambda **kwargs: execute_tasks(client, **kwargs),
         check_fn=check_fn,
         description=(
-            "Manage tasks, habits, and chores. Actions: list, get, create, update, complete, archive, search. "
+            "Manage tasks, habits, and chores. Actions: list, get, create, update, complete, archive, search, "
+            "share, list_shares, revoke_share, respond_share, shared_with_me. "
+            "SHARING: share gives specific household members access to one task and sends each recipient a "
+            "notification (push + inbox), so confirm the recipients with the user first and call list_shares "
+            "to avoid re-sharing. memberIds are household member ids from myn_household members. Being in the "
+            "same household does NOT give someone access to a task; only a share does. Only the task owner can "
+            "share, list_shares, or revoke_share; chores, habits, recurring, completed, and archived tasks cannot "
+            "be shared. shared_with_me lists shares sent to the user; respond_share accepts or declines one. "
             "SCHEDULING: Tasks default to isAutoScheduled=true. Always assign scheduleNames based on when the task should happen "
             '(e.g. ["Morning"], ["Weekend Morning"], ["Weekday Evening"]). Use calendarName to link to a specific calendar (e.g. "Family"). '
             "CALENDAR EVENTS: When creating a task for a specific date/time event, also create a matching calendar event via myn_calendar."

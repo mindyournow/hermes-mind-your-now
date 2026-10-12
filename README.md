@@ -78,10 +78,10 @@ All tools use the Hermes toolset `mind-your-now`.
 
 | Tool | Actions |
 |---|---|
-| `myn_tasks` | `list`, `get`, `create`, `update`, `complete`, `archive`, `search` |
+| `myn_tasks` | `list`, `get`, `create`, `update`, `complete`, `archive`, `search`, `share`, `list_shares`, `revoke_share`, `respond_share`, `shared_with_me` |
 | `myn_debrief` | `status`, `generate`, `get`, `apply_correction`, `complete_session` |
 | `myn_calendar` | `list_calendars`, `list_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `move_event`, `meetings` (use `startTime`/`endTime` for create/update, not `startDateTime`) |
-| `myn_habits` | `streaks`, `skip`, `chains`, `schedule` |
+| `myn_habits` | `streaks`, `skip`, `chains`, `schedule`, `reminders` |
 | `myn_lists` | `get`, `add`, `toggle`, `bulk_add`, `update`, `delete`, `delete_checked`, `convert_to_tasks` (supports `dryRun`) |
 | `myn_search` | `search` |
 | `myn_timers` | `create_countdown`, `create_alarm`, `list`, `cancel`, `snooze`, `pomodoro` |
@@ -94,6 +94,14 @@ All tools use the Hermes toolset `mind-your-now`.
 | `myn_ynab` | Budget, transaction, scheduled-transaction, analytics, connection, split, and category-management actions matching `@mind-your-now/myn` |
 
 **Collections, not projects:** MYN has twelve fixed collections that cannot be created or deleted. Use `myn_projects.move_task` to re-file a task; real user-named projects are planned separately.
+
+**Household membership is not task sharing.** Members of the same household see household chores and lists, but they do not see each other's tasks. To give someone access to one task, use `myn_tasks` `share`:
+
+- `memberIds` are household member IDs: the `id` field from `myn_household` `members`, not `customerId`.
+- `shareType` is `EDIT` by default, as in the MYN app. `VIEW` is read-only. `DELEGATE` transfers ownership of the task to the recipient.
+- Each recipient gets a notification (push and in-app inbox) and must accept the share. Confirm recipients with the user before sharing, and call `list_shares` first to avoid sharing twice.
+- Only the task owner can `share`, `list_shares`, or `revoke_share`. Chores, habits, recurring tasks, and completed or archived tasks cannot be shared.
+- `shared_with_me` lists pending and accepted shares sent to the user; `respond_share` accepts or declines a pending one.
 
 Timers created through `myn_timers` include `sourceAgentName` and `sourceChannel`, so MYN can attribute reminders to the Hermes agent that created them.
 
