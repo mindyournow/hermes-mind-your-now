@@ -6,8 +6,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from mind_your_now.behavioral_guidelines import BEHAVIORAL_GUIDELINES
-from mind_your_now.client import MynApiClient
+from .behavioral_guidelines import BEHAVIORAL_GUIDELINES
+from .client import MynApiClient
 
 
 logger = logging.getLogger(__name__)

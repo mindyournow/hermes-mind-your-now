@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from mind_your_now.client import MynApiError
+from ..client import MynApiError
 
 
 logger = logging.getLogger(__name__)

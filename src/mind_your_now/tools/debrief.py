@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from mind_your_now.client import MynApiClient
-from mind_your_now.schemas import action_schema
-from mind_your_now.tools import register_myn_tool, tool_error, tool_result
+from ..client import MynApiClient
+from ..schemas import action_schema
+from ..tools import register_myn_tool, tool_error, tool_result
 
 
 DEBRIEF_SCHEMA = action_schema(

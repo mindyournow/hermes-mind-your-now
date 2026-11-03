@@ -8,9 +8,9 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from mind_your_now.client import MynApiClient
-from mind_your_now.schemas import action_schema
-from mind_your_now.tools import register_myn_tool, tool_error, tool_result
+from ..client import MynApiClient
+from ..schemas import action_schema
+from ..tools import register_myn_tool, tool_error, tool_result
 
 
 logger = logging.getLogger(__name__)
@@ -296,7 +296,7 @@ def execute_ynab(client: MynApiClient, **input_data: Any) -> str:
         query = input_data.get("payeeName") or input_data.get("query")
         if not query:
             return tool_error("payeeName (or query) is required for search_payees action")
-        from mind_your_now.tools import truncate
+        from ..tools import truncate
         data = client.get(
             "/api/v1/ynab/budget/payees/search",
             params={"query": query},
@@ -434,7 +434,7 @@ def execute_ynab(client: MynApiClient, **input_data: Any) -> str:
                 if t.get("date", "") <= until_date
             ]
         # Apply limit and truncation
-        from mind_your_now.tools import truncate
+        from ..tools import truncate
         if input_data.get("limit"):
             data = truncate(data, "transactions", int(input_data["limit"]))
         return tool_result(data)

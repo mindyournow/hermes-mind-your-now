@@ -13,9 +13,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from mind_your_now.client import MynApiClient, MynApiError
-from mind_your_now.schemas import action_schema
-from mind_your_now.tools import register_myn_tool, tool_error, tool_result
+from ..client import MynApiClient, MynApiError
+from ..schemas import action_schema
+from ..tools import register_myn_tool, tool_error, tool_result
 
 
 MEMORY_FETCH_LIMIT = 50
@@ -92,7 +92,7 @@ def execute_memory(client: MynApiClient, **input_data: Any) -> str:
         memories = _memory_items(data)
 
         # Preserve main's transparent client-side truncation markers.
-        from mind_your_now.tools import truncate
+        from ..tools import truncate
         result = data if isinstance(data, dict) else {"memories": memories}
         if "memories" not in result:
             result = {"memories": memories}

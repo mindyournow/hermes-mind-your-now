@@ -8,9 +8,9 @@ from typing import Any
 
 import httpx
 
-from mind_your_now.client import MynApiClient
-from mind_your_now.config import MynConfig
-from mind_your_now.tools.a2a_pairing import execute_a2a_pairing
+from .client import MynApiClient
+from .config import MynConfig
+from .tools.a2a_pairing import execute_a2a_pairing
 
 
 USAGE = "Usage: /myn <status|pair INVITE|unpair>"

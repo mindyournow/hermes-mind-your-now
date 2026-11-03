@@ -20,10 +20,10 @@ The matching names and action vocabulary let prompts and examples move between H
 
 ### GitHub release wheel
 
-The package is not currently published on PyPI. Install the v0.3.1 wheel directly from GitHub Releases:
+The package is not currently published on PyPI. Install the v0.3.2 wheel directly from GitHub Releases:
 
 ```bash
-python -m pip install https://github.com/mindyournow/hermes-mind-your-now/releases/download/v0.3.1/hermes_mind_your_now-0.3.1-py3-none-any.whl
+python -m pip install https://github.com/mindyournow/hermes-mind-your-now/releases/download/v0.3.2/hermes_mind_your_now-0.3.2-py3-none-any.whl
 hermes plugins enable mind-your-now
 hermes plugins list --json
 ```
@@ -32,13 +32,14 @@ Once the package is published on PyPI, the shorter installation command will be 
 
 ### Directory drop
 
-Copy `plugin.yaml` and the `mind_your_now/` package to:
+Copy `plugin.yaml` and the **contents** of `src/mind_your_now/` into one directory:
 
-```text
-~/.hermes/plugins/mind-your-now/
+```bash
+mkdir -p ~/.hermes/plugins/mind-your-now
+cp -r src/mind_your_now/. plugin.yaml ~/.hermes/plugins/mind-your-now/
 ```
 
-Then enable `mind-your-now` in Hermes. Directory-drop installs do **not** install dependencies: the general Hermes plugin loader ignores a `pip_dependencies` manifest key. `httpx` must already be importable in the Hermes environment. A stock Hermes installation already includes it; custom environments must install it separately.
+Hermes imports that directory as a package, which works because the plugin uses relative imports (0.3.2+). Then enable `mind-your-now` in Hermes. Directory-drop installs do **not** install dependencies: the general Hermes plugin loader ignores a `pip_dependencies` manifest key. `httpx` must already be importable in the Hermes environment. A stock Hermes installation already includes it; custom environments must install it separately.
 
 ## Configuration
 
@@ -175,23 +176,28 @@ The redaction is auth-agnostic — it applies to all tool results regardless of 
 
 ## Deploy to Fly.io
 
-For `hermes-eltmon`, build and upload a wheel to the persistent volume:
+`hermes-eltmon` runs the Docker image, where only `/opt/data` (`HERMES_HOME`) persists across deploys. Install the plugin as a directory plugin on that volume:
 
 ```bash
-python -m build
-fly sftp put -a hermes-eltmon dist/hermes_mind_your_now-0.3.1-py3-none-any.whl /opt/data/plugins/hermes_mind_your_now-0.3.1-py3-none-any.whl
-fly ssh console -a hermes-eltmon -s -C "sh -lc 'mkdir -p /opt/data/python-pkgs; chown -R hermes:hermes /opt/data/plugins /opt/data/python-pkgs; su hermes -s /bin/sh -c \"uv pip install --python /opt/hermes/.venv/bin/python --target /opt/data/python-pkgs --no-deps --reinstall /opt/data/plugins/hermes_mind_your_now-0.3.1-py3-none-any.whl\"'"
-fly secrets set -a hermes-eltmon PYTHONPATH=/opt/data/python-pkgs
+mkdir -p /tmp/myn-plugin/mind-your-now
+cp -r src/mind_your_now/. plugin.yaml /tmp/myn-plugin/mind-your-now/
+find /tmp/myn-plugin -name __pycache__ -prune -exec rm -rf {} +
+tar czf /tmp/myn-plugin.tgz -C /tmp/myn-plugin mind-your-now
+fly sftp put -a hermes-eltmon /tmp/myn-plugin.tgz /tmp/myn-plugin.tgz
+fly ssh console -a hermes-eltmon -C "sh -c 'chown hermes:hermes /tmp/myn-plugin.tgz; su hermes -s /bin/sh -c \"rm -rf /opt/data/plugins/mind-your-now; tar xzf /tmp/myn-plugin.tgz -C /opt/data/plugins\"'"
 fly secrets set -a hermes-eltmon MYN_API_KEY='myn_...'
+fly machine restart <machine-id> -a hermes-eltmon
 ```
 
-Ensure `/opt/data/python-pkgs` is on `PYTHONPATH`, enable `mind-your-now` in Hermes, restart the Hermes process, and verify with:
+Do not install the wheel into a `PYTHONPATH` directory on the volume. Hermes v0.21.6+ starts through a launcher that resets `PYTHONPATH`, so an entry-point install outside the image's venv is not discovered. A wheel installed into the image's venv is lost on the next deploy.
+
+Enable `mind-your-now` in `plugins.enabled`, restart the machine, and verify with:
 
 ```bash
 hermes plugins list --json
 ```
 
-Confirm the output contains `mind-your-now` with `status` set to `enabled` and `source` set to `entrypoint`. Hermes 0.18.x's `hermes tools` command lists built-in toolsets and does not accept a plugin name.
+Confirm the output contains `mind-your-now` with `status` set to `enabled` and `source` set to `user`.
 
 End-to-end verification should cover a real schedule query, a Kaia memory hit, a reminder whose MYN provenance begins with `Hermes/`, and `/myn status`.
 

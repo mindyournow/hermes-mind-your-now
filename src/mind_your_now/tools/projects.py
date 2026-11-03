@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from mind_your_now.client import MynApiClient
-from mind_your_now.schemas import action_schema
-from mind_your_now.tools import register_myn_tool, tool_error, tool_result
+from ..client import MynApiClient
+from ..schemas import action_schema
+from ..tools import register_myn_tool, tool_error, tool_result
 
 
 PROJECTS_SCHEMA = action_schema(
@@ -35,7 +35,7 @@ def execute_projects(client: MynApiClient, **input_data: Any) -> str:
         else:
             return tool_result(data)
 
-        from mind_your_now.tools import truncate
+        from ..tools import truncate
         result = {"projects": projects}
         if input_data.get("limit"):
             result = truncate(result, "projects", limit)

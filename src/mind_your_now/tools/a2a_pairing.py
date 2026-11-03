@@ -12,9 +12,9 @@ from typing import Any
 
 import httpx
 
-from mind_your_now.config import validate_base_url, write_json_0600
-from mind_your_now.schemas import action_schema
-from mind_your_now.tools import register_myn_tool, tool_error, tool_result
+from ..config import validate_base_url, write_json_0600
+from ..schemas import action_schema
+from ..tools import register_myn_tool, tool_error, tool_result
 
 
 logger = logging.getLogger(__name__)

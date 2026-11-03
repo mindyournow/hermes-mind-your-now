@@ -5,24 +5,24 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from mind_your_now.client import MynApiClient
-from mind_your_now.commands import handle_myn_command
-from mind_your_now.config import MynConfigError, load_config
-from mind_your_now.memory_context import build_pre_llm_call_hook
-from mind_your_now.tools.a2a_pairing import register_a2a_pairing_tool
-from mind_your_now.tools.calendar import register_calendar_tool
-from mind_your_now.tools.debrief import register_debrief_tool
-from mind_your_now.tools.habits import register_habits_tool
-from mind_your_now.tools.household import register_household_tool
-from mind_your_now.tools.lists import register_lists_tool
-from mind_your_now.tools.memory import register_memory_tool
-from mind_your_now.tools.planning import register_planning_tool
-from mind_your_now.tools.profile import register_profile_tool
-from mind_your_now.tools.projects import register_projects_tool
-from mind_your_now.tools.search import register_search_tool
-from mind_your_now.tools.tasks import register_tasks_tool
-from mind_your_now.tools.timers import register_timers_tool
-from mind_your_now.tools.ynab import register_ynab_tool
+from .client import MynApiClient
+from .commands import handle_myn_command
+from .config import MynConfigError, load_config
+from .memory_context import build_pre_llm_call_hook
+from .tools.a2a_pairing import register_a2a_pairing_tool
+from .tools.calendar import register_calendar_tool
+from .tools.debrief import register_debrief_tool
+from .tools.habits import register_habits_tool
+from .tools.household import register_household_tool
+from .tools.lists import register_lists_tool
+from .tools.memory import register_memory_tool
+from .tools.planning import register_planning_tool
+from .tools.profile import register_profile_tool
+from .tools.projects import register_projects_tool
+from .tools.search import register_search_tool
+from .tools.tasks import register_tasks_tool
+from .tools.timers import register_timers_tool
+from .tools.ynab import register_ynab_tool
 
 
 __all__ = ["register"]

@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from mind_your_now.config import validate_base_url
+from .config import validate_base_url
 
 
 logger = logging.getLogger(__name__)

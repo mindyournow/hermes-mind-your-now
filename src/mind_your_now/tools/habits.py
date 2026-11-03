@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from mind_your_now.client import MynApiClient
-from mind_your_now.schemas import action_schema
-from mind_your_now.tools import (
+from ..client import MynApiClient
+from ..schemas import action_schema
+from ..tools import (
     UnifiedTaskScan,
     fetch_all_unified_tasks,
     register_myn_tool,
