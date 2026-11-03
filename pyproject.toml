@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-mind-your-now"
-version = "0.3.0"
+version = "0.3.1"
 description = "Hermes plugin for Mind Your Now — tasks, reminders, calendar, habits, lists, memory, and more."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.15"
 authors = [
     {name = "Mind Your Now"},
 ]
