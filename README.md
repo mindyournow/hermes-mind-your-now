@@ -18,17 +18,13 @@ The matching names and action vocabulary let prompts and examples move between H
 
 ## Install
 
-### GitHub release wheel
-
-The package is not currently published on PyPI. Install the v0.3.2 wheel directly from GitHub Releases:
+### From PyPI
 
 ```bash
-python -m pip install https://github.com/mindyournow/hermes-mind-your-now/releases/download/v0.3.2/hermes_mind_your_now-0.3.2-py3-none-any.whl
+python -m pip install hermes-mind-your-now
 hermes plugins enable mind-your-now
 hermes plugins list --json
 ```
-
-Once the package is published on PyPI, the shorter installation command will be `python -m pip install hermes-mind-your-now`; do not use that command before publication.
 
 ### Directory drop
 
@@ -210,6 +206,13 @@ python -m venv .venv
 ```
 
 The tests use `httpx.MockTransport`; they make no real network requests and contain no sleeps.
+
+## Releasing
+
+Bump `version` in `pyproject.toml` and `plugin.yaml`, merge to `main`, then tag that `main` commit
+`v<version>` and push the tag. `.github/workflows/release.yml` runs the tests and publishes to PyPI through
+trusted publishing, in the GitHub environment `pypi`. The publish job refuses a tag that does not match both
+`pyproject.toml` and `plugin.yaml`, or is not on `main`.
 
 ## License
 
